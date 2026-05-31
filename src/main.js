@@ -37,6 +37,31 @@ let camera, scene, renderer, controls, clock, light;
 let updateParticles, spawnParticles;
 let getInstanceColor;
 
+let audioContext;
+let analyser;
+let frequencyData;
+let waveformData;
+let audioStarted = false;
+
+const audioDrivenPosition = new THREE.Vector3();
+let audioPhase = 0;
+let smoothedLevel = 0;
+
+const audioTargetPosition = new THREE.Vector3();
+const audioRandomPosition = new THREE.Vector3();
+
+const audioVelocity = new THREE.Vector3();
+let previousLevel = 0;
+let directionCooldown = 0;
+
+let audioSource = null;
+let audioGain = null;
+let audioIsPlaying = false;
+
+const spawnParticleSize = uniform(1.0);
+const spawnSpread = uniform(0.08);
+const spawnLinksWidth = uniform(0.005);
+
 const TWO_PI = PI.mul(2.0);
 
 const screenPointer = new THREE.Vector2();
@@ -44,12 +69,12 @@ const scenePointer = new THREE.Vector3();
 const raycastPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const raycaster = new THREE.Raycaster();
 
-const nbParticles = Math.pow(2, 13);
+const nbParticles = Math.pow(2, 14);
 
 const timeScale = uniform(1.0);
-const particleLifetime = uniform(0.5);
-const particleSize = uniform(1.0);
-const linksWidth = uniform(0.005);
+const particleLifetime = uniform(0.8);
+const particleSize = uniform(2.5);
+const linksWidth = uniform(0.025);
 
 const colorOffset = uniform(0.0);
 const colorVariance = uniform(2.0);
@@ -66,6 +91,8 @@ const turbOctaves = uniform(2);
 const turbLacunarity = uniform(2.0);
 const turbGain = uniform(0.5);
 const turbFriction = uniform(0.01);
+
+const freezeLifeThreshold = uniform(0.90);
 
 init();
 
@@ -99,10 +126,20 @@ async function init() {
   const particlePositions = storage(new THREE.StorageInstancedBufferAttribute(nbParticles, 4), 'vec4', nbParticles);
   const particleVelocities = storage(new THREE.StorageInstancedBufferAttribute(nbParticles, 4), 'vec4', nbParticles);
 
+  const particleColors = storage(new THREE.StorageInstancedBufferAttribute(nbParticles, 4), 'vec4', nbParticles);
+  const particleProperties = storage(new THREE.StorageInstancedBufferAttribute(nbParticles, 4), 'vec4', nbParticles);
+
   renderer.compute(
     Fn(() => {
       particlePositions.element(instanceIndex).xyz.assign(vec3(10000.0));
-      particlePositions.element(instanceIndex).w.assign(vec3(-1.0));
+      particlePositions.element(instanceIndex).w.assign(-1.0);
+
+      particleColors.element(instanceIndex).xyz.assign(vec3(1.0));
+      particleColors.element(instanceIndex).w.assign(1.0);
+
+      particleProperties.element(instanceIndex).x.assign(1.0);
+      particleProperties.element(instanceIndex).y.assign(0.005);
+      particleProperties.element(instanceIndex).z.assign(1.0);
     })().compute(nbParticles)
   );
 
@@ -113,19 +150,12 @@ async function init() {
   particleMaterial.blending = THREE.AdditiveBlending;
   particleMaterial.depthWrite = false;
   particleMaterial.positionNode = particlePositions.toAttribute();
-  particleMaterial.scaleNode = vec2(particleSize);
+  particleMaterial.scaleNode = vec2(particleProperties.toAttribute().x);
   particleMaterial.rotationNode = atan(particleVelocities.toAttribute().y, particleVelocities.toAttribute().x);
 
   particleMaterial.colorNode = Fn(() => {
     const life = particlePositions.toAttribute().w;
-    const modLife = pcurve(life.oneMinus(), 8.0, 1.0);
-    const pulse = pcurve(
-      sin(hash(instanceIndex).mul(TWO_PI).add(time.mul(0.5).mul(TWO_PI))).mul(0.5).add(0.5),
-      0.25,
-      0.25
-    ).mul(10.0).add(1.0);
-
-    return getInstanceColor(instanceIndex).mul(pulse.mul(modLife));
+    return particleColors.toAttribute().xyz.mul(life);
   })();
 
   particleMaterial.opacityNode = Fn(() => {
@@ -177,11 +207,29 @@ async function init() {
     const dt = deltaTime.mul(0.1).mul(timeScale);
 
     If(life.greaterThan(0.0), () => {
-      const localVel = mx_fractal_noise_vec3(position.mul(turbFrequency), turbOctaves, turbLacunarity, turbGain, turbAmplitude).mul(life.add(0.01));
-      velocity.addAssign(localVel);
-      velocity.mulAssign(turbFriction.oneMinus());
-      position.addAssign(velocity.mul(dt));
-      life.subAssign(dt.mul(particleLifetime.reciprocal()));
+      const frozen = particleProperties.element(instanceIndex).z;
+
+      If(frozen.lessThan(0.5), () => {
+        const localVel = mx_fractal_noise_vec3(
+          position.mul(turbFrequency),
+          turbOctaves,
+          turbLacunarity,
+          turbGain,
+          turbAmplitude
+        ).mul(life.add(0.01));
+
+        velocity.addAssign(localVel);
+        velocity.mulAssign(turbFriction.oneMinus());
+        position.addAssign(velocity.mul(dt));
+
+        life.subAssign(dt.mul(particleLifetime.reciprocal()));
+
+        If(life.lessThan(freezeLifeThreshold), () => {
+          life.assign(freezeLifeThreshold);
+          velocity.assign(vec3(0.0));
+          frozen.assign(1.0);
+        });
+      });
 
       const closestDist1 = float(10000.0).toVar();
       const closestPos1 = vec3(0.0).toVar();
@@ -210,30 +258,32 @@ async function init() {
         });
       });
 
+      const frozenLinksWidth = particleProperties.element(instanceIndex).y;
+
       const linksPositions = storage(linksVerticesSBA, 'vec4', linksVerticesSBA.count);
       const linksColors = storage(linksColorsSBA, 'vec4', linksColorsSBA.count);
       const firstLinkIndex = instanceIndex.mul(8);
       const secondLinkIndex = firstLinkIndex.add(4);
 
       linksPositions.element(firstLinkIndex).xyz.assign(position);
-      linksPositions.element(firstLinkIndex).y.addAssign(linksWidth);
+      linksPositions.element(firstLinkIndex).y.addAssign(frozenLinksWidth);
       linksPositions.element(firstLinkIndex.add(1)).xyz.assign(position);
-      linksPositions.element(firstLinkIndex.add(1)).y.addAssign(linksWidth.negate());
+      linksPositions.element(firstLinkIndex.add(1)).y.addAssign(frozenLinksWidth.negate());
       linksPositions.element(firstLinkIndex.add(2)).xyz.assign(closestPos1);
-      linksPositions.element(firstLinkIndex.add(2)).y.addAssign(linksWidth.negate());
+      linksPositions.element(firstLinkIndex.add(2)).y.addAssign(frozenLinksWidth.negate());
       linksPositions.element(firstLinkIndex.add(3)).xyz.assign(closestPos1);
-      linksPositions.element(firstLinkIndex.add(3)).y.addAssign(linksWidth);
+      linksPositions.element(firstLinkIndex.add(3)).y.addAssign(frozenLinksWidth);
 
       linksPositions.element(secondLinkIndex).xyz.assign(position);
-      linksPositions.element(secondLinkIndex).y.addAssign(linksWidth);
+      linksPositions.element(secondLinkIndex).y.addAssign(frozenLinksWidth);
       linksPositions.element(secondLinkIndex.add(1)).xyz.assign(position);
-      linksPositions.element(secondLinkIndex.add(1)).y.addAssign(linksWidth.negate());
+      linksPositions.element(secondLinkIndex.add(1)).y.addAssign(frozenLinksWidth.negate());
       linksPositions.element(secondLinkIndex.add(2)).xyz.assign(closestPos2);
-      linksPositions.element(secondLinkIndex.add(2)).y.addAssign(linksWidth.negate());
+      linksPositions.element(secondLinkIndex.add(2)).y.addAssign(frozenLinksWidth.negate());
       linksPositions.element(secondLinkIndex.add(3)).xyz.assign(closestPos2);
-      linksPositions.element(secondLinkIndex.add(3)).y.addAssign(linksWidth);
+      linksPositions.element(secondLinkIndex.add(3)).y.addAssign(frozenLinksWidth);
 
-      const linkColor = getInstanceColor(instanceIndex);
+      const linkColor = particleColors.element(instanceIndex).xyz;
       const l1 = max(0.0, min(closestLife1, life)).pow(0.8);
       const l2 = max(0.0, min(closestLife2, life)).pow(0.8);
 
@@ -251,8 +301,17 @@ async function init() {
     const position = particlePositions.element(particleIndex).xyz;
     const life = particlePositions.element(particleIndex).w;
     const velocity = particleVelocities.element(particleIndex).xyz;
+    const particleColor = particleColors.element(particleIndex);
+    const particleProperty = particleProperties.element(particleIndex);
 
     life.assign(1.0);
+
+    particleColor.xyz.assign(getInstanceColor(particleIndex));
+    particleColor.w.assign(1.0);
+
+    particleProperty.x.assign(spawnParticleSize);
+    particleProperty.y.assign(spawnLinksWidth);
+    particleProperty.z.assign(0.0);
 
     const rRange = float(0.01);
     const rTheta = hash(particleIndex).mul(TWO_PI);
@@ -282,11 +341,12 @@ async function init() {
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.autoRotate = true;
+  controls.autoRotate = false;
   controls.maxDistance = 75;
 
   window.addEventListener('resize', onWindowResize);
-  window.addEventListener('pointermove', onPointerMove);
+
+  createAudioStartButton();
 
   const gui = new GUI({ title: 'Parameters' });
 
@@ -330,23 +390,254 @@ function updatePointer() {
 
 function animate() {
   renderer.compute(updateParticles);
-  renderer.compute(spawnParticles);
-  spawnIndex.value = (spawnIndex.value + nbToSpawn.value) % nbParticles;
-  raycastPlane.normal.applyEuler(camera.rotation);
-  updatePointer();
-  previousSpawnPosition.value.copy(spawnPosition.value);
-  spawnPosition.value.lerp(scenePointer, 0.1);
+
+  if (audioIsPlaying) {
+    renderer.compute(spawnParticles);
+    spawnIndex.value = (spawnIndex.value + nbToSpawn.value) % nbParticles;
+  }
   const delta = clock.getDelta();
   const elapsedTime = clock.getElapsedTime();
 
-  colorOffset.value += delta * colorRotationSpeed.value * timeScale.value;
+  previousSpawnPosition.value.copy(spawnPosition.value);
+
+  if (audioStarted) {
+    updateAudioDrivenPosition(delta);
+    spawnPosition.value.lerp(audioDrivenPosition, 0.38);
+  } else {
+    raycastPlane.normal.applyEuler(camera.rotation);
+    updatePointer();
+    spawnPosition.value.lerp(scenePointer, 0.1);
+  }
+
+  if (audioIsPlaying) {
+    colorOffset.value += delta * colorRotationSpeed.value * timeScale.value;
+  }
 
   light.position.set(
     Math.sin(elapsedTime * 0.5) * 30,
     Math.cos(elapsedTime * 0.3) * 30,
     Math.sin(elapsedTime * 0.2) * 30
-  );
+  ); 
 
   controls.update();
   renderer.render(scene, camera);
+}
+
+function createAudioStartButton() {
+  const wrapper = document.createElement('div');
+  wrapper.style.position = 'absolute';
+  wrapper.style.left = '50%';
+  wrapper.style.bottom = '32px';
+  wrapper.style.transform = 'translateX(-50%)';
+  wrapper.style.zIndex = '20';
+  wrapper.style.display = 'flex';
+  wrapper.style.gap = '10px';
+  wrapper.style.alignItems = 'center';
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'audio/*';
+  input.style.display = 'none';
+
+  const button = document.createElement('button');
+  button.textContent = 'Load audio';
+  button.style.padding = '12px 18px';
+  button.style.border = '1px solid rgba(255,255,255,0.25)';
+  button.style.borderRadius = '8px';
+  button.style.background = 'rgba(255,255,255,0.1)';
+  button.style.color = '#fff';
+  button.style.font = '14px Arial, sans-serif';
+  button.style.cursor = 'pointer';
+
+  const label = document.createElement('span');
+  label.textContent = 'No file selected';
+  label.style.color = 'rgba(255,255,255,0.75)';
+  label.style.font = '13px Arial, sans-serif';
+
+  button.addEventListener('click', () => {
+    input.click();
+  });
+
+  const stopButton = document.createElement('button');
+  stopButton.textContent = 'Stop audio';
+  stopButton.style.padding = '12px 18px';
+  stopButton.style.border = '1px solid rgba(255,255,255,0.25)';
+  stopButton.style.borderRadius = '8px';
+  stopButton.style.background = 'rgba(255,255,255,0.1)';
+  stopButton.style.color = '#fff';
+  stopButton.style.font = '14px Arial, sans-serif';
+  stopButton.style.cursor = 'pointer';
+
+  stopButton.addEventListener('click', stopAudio);
+
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    label.textContent = file.name;
+    await startAudioFile(file);
+  });
+
+  wrapper.appendChild(input);
+  wrapper.appendChild(button);
+  wrapper.appendChild(stopButton);
+  wrapper.appendChild(label);
+
+  document.body.appendChild(wrapper);
+}
+
+function stopAudio() {
+  if (audioSource) {
+    try {
+      audioSource.stop();
+    } catch (error) {
+      // Source already stopped.
+    }
+
+    audioSource.disconnect();
+    audioSource = null;
+  }
+
+  audioIsPlaying = false;
+  audioStarted = false;
+  smoothedLevel = 0;
+}
+
+async function startAudioFile(file) {
+  if (audioContext) {
+    await audioContext.close();
+  }
+
+  audioContext = new AudioContext();
+
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.86;
+
+  frequencyData = new Uint8Array(analyser.frequencyBinCount);
+  waveformData = new Uint8Array(analyser.fftSize);
+
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+  audioSource = audioContext.createBufferSource();
+  audioSource.buffer = audioBuffer;
+  audioSource.loop = true;
+
+  audioGain = audioContext.createGain();
+  audioGain.gain.value = 0.8;
+
+  audioSource.connect(audioGain);
+  audioGain.connect(analyser);
+  analyser.connect(audioContext.destination);
+
+  audioSource.start();
+
+  audioStarted = true;
+  audioIsPlaying = true;
+}
+
+
+function updateAudioDrivenPosition(delta) {
+  if (!audioStarted) return;
+
+  analyser.getByteFrequencyData(frequencyData);
+  analyser.getByteTimeDomainData(waveformData);
+
+  let sum = 0;
+  for (let i = 0; i < waveformData.length; i++) {
+    const v = (waveformData[i] - 128) / 128;
+    sum += v * v;
+  }
+
+  const rms = Math.sqrt(sum / waveformData.length);
+  const level = THREE.MathUtils.clamp(rms * 8.0, 0, 1);
+  smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, level, 0.12);
+
+  const splitIndex = Math.floor(frequencyData.length * 0.18);
+
+  let lowSum = 0;
+  let highSum = 0;
+
+  for (let i = 0; i < frequencyData.length; i++) {
+    const value = frequencyData[i] / 255;
+
+    if (i < splitIndex) {
+      lowSum += value;
+    } else {
+      highSum += value;
+    }
+  }
+
+  const lowEnergy = lowSum / splitIndex;
+  const highEnergy = highSum / (frequencyData.length - splitIndex);
+
+  const balance = highEnergy - lowEnergy;
+
+  audioPhase += delta * (0.65 + smoothedLevel * 1.8);
+
+  const waveformIndex = Math.floor((audioPhase * 180) % waveformData.length);
+  const waveformValue = (waveformData[waveformIndex] - 128) / 128;
+
+  const third = Math.floor(frequencyData.length / 3);
+
+  let lowBand = 0;
+  let midBand = 0;
+  let highBand = 0;
+
+  for (let i = 0; i < frequencyData.length; i++) {
+    const value = frequencyData[i] / 255;
+
+    if (i < third) {
+      lowBand += value;
+    } else if (i < third * 2) {
+      midBand += value;
+    } else {
+      highBand += value;
+    }
+  }
+
+  lowBand /= third;
+  midBand /= third;
+  highBand /= frequencyData.length - third * 2;
+
+  const xFromMid = (midBand - 0.18) * 10.0;
+  const yFromHighLow = (highBand - lowBand) * 12.0;
+  const zFromLow = (lowBand - 0.18) * 10.0;
+
+  const waveformKick = waveformValue * (1.0 + smoothedLevel * 4.0);
+
+  const x =
+    xFromMid +
+    Math.sin(audioPhase * 0.7) * 1.2 +
+    waveformKick * 0.8;
+
+  const y =
+    yFromHighLow +
+    waveformKick * 1.6;
+
+  const z =
+    zFromLow +
+    Math.sin(audioPhase * 0.53 + midBand * 4.0) * 1.8 -
+    waveformKick * 0.6;
+
+  audioDrivenPosition.set(x, y, z);
+
+  turbAmplitude.value = THREE.MathUtils.lerp(
+    turbAmplitude.value,
+    0.7 + smoothedLevel * 8.0,
+    0.08
+  );
+
+  spawnParticleSize.value = THREE.MathUtils.lerp(
+    spawnParticleSize.value,
+    0.35 + smoothedLevel * 1.25,
+    0.08
+  );
+
+  nbToSpawn.value = THREE.MathUtils.lerp(
+    nbToSpawn.value,
+    8 + smoothedLevel * 70,
+    0.08
+  );
 }
