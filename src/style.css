@@ -1,0 +1,72 @@
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #14171a;
+  color: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+canvas {
+  display: block;
+}
+
+#info {
+  position: absolute;
+  inset: 16px 16px auto 16px;
+  z-index: 10;
+  max-width: 360px;
+  pointer-events: none;
+}
+
+#info a {
+  color: #fff;
+  pointer-events: auto;
+}
+
+.logo-link {
+  display: inline-block;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 10px;
+  position: relative;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.08) 35%, transparent 36%),
+    linear-gradient(135deg, #3d6cff 0%, #0ea5e9 52%, #14b8a6 100%);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+
+.logo-link::after {
+  content: "TS";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.title-wrapper {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.title-wrapper span {
+  font-weight: 400;
+}
+
+small {
+  display: block;
+  line-height: 1.45;
+  opacity: 0.85;
+}
