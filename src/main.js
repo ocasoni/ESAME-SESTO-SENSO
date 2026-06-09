@@ -48,11 +48,10 @@ const audioDrivenPosition = new THREE.Vector3();
 let audioPhase = 0;
 let smoothedLevel = 0;
 
-const trajectoryPosition = new THREE.Vector3();
-const trajectoryVelocity = new THREE.Vector3();
-const trajectoryDirection = new THREE.Vector3(1, 0.28, 0.16).normalize();
-const trajectoryTargetDirection = new THREE.Vector3();
-let trajectoryWanderPhase = 0;
+const activeTrails = [];
+let activeTrailNumber = 0;
+let recordingTrail = null;
+let displayTrail = null;
 
 let smoothedLowBand = 0;
 let smoothedMidBand = 0;
@@ -62,6 +61,9 @@ let previousFrequencyBalance = 0;
 let audioSource = null;
 let audioGain = null;
 let audioIsPlaying = false;
+
+const breathLearnDuration = 30.0;
+let simulationPaused = false;
 
 const spawnSpread = uniform(0.08);
 const spawnLinksWidth = uniform(0.005);
@@ -81,7 +83,14 @@ const scenePointer = new THREE.Vector3();
 const raycastPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const raycaster = new THREE.Raycaster();
 
-const nbParticles = Math.pow(2, 14);
+const maxTrailSlots = 6;
+
+// Ogni scia mantiene la stessa quantità di particelle che aveva prima.
+// Così il comportamento visivo della scia rimane uguale.
+const particlesPerTrail = Math.pow(2, 14);
+const nbParticles = particlesPerTrail * maxTrailSlots;
+
+const currentTrailParticleStart = uniform(0);
 
 const timeScale = uniform(0.8);
 const particleLifetime = uniform(0.65);
@@ -259,7 +268,9 @@ async function init() {
   })().compute(nbParticles).label('Update Particles');
 
   spawnParticles = Fn(() => {
-    const particleIndex = spawnIndex.add(instanceIndex).mod(nbParticles).toInt();
+    const particleIndex = currentTrailParticleStart
+      .add(spawnIndex.add(instanceIndex).mod(particlesPerTrail).toInt())
+      .toInt();
     const position = particlePositions.element(particleIndex).xyz;
     const life = particlePositions.element(particleIndex).w;
     const velocity = particleVelocities.element(particleIndex).xyz;
@@ -452,28 +463,43 @@ function updatePointer() {
 }
 
 function animate() {
-  renderer.compute(updateParticles);
-
-  if (audioIsPlaying) {
-    renderer.compute(spawnParticles);
-    spawnIndex.value = (spawnIndex.value + nbToSpawn.value) % nbParticles;
-  }
   const delta = clock.getDelta();
   const elapsedTime = clock.getElapsedTime();
 
-  previousSpawnPosition.value.copy(spawnPosition.value);
-
-  if (audioStarted) {
-    updateAudioDrivenPosition(delta);
-    spawnPosition.value.lerp(audioDrivenPosition, trajectoryParams.smoothness);
-  } else {
-    raycastPlane.normal.applyEuler(camera.rotation);
-    updatePointer();
-    spawnPosition.value.lerp(scenePointer, 0.1);
+  if (!simulationPaused) {
+    renderer.compute(updateParticles);
   }
 
+  if (!simulationPaused && activeTrails.length > 0) {
+    for (const trail of activeTrails) {
+      trail.previousSpawnPosition.copy(trail.spawnPosition);
+
+      updateAudioDrivenPosition(trail, delta);
+
+      trail.spawnPosition.lerp(
+        trail.audioDrivenPosition,
+        trajectoryParams.smoothness
+      );
+
+      currentTrailParticleStart.value = trail.particleStart;
+      spawnIndex.value = trail.spawnIndex;
+
+      previousSpawnPosition.value.copy(trail.previousSpawnPosition);
+      spawnPosition.value.copy(trail.spawnPosition);
+
+      renderer.compute(spawnParticles);
+
+      trail.spawnIndex = (trail.spawnIndex + nbToSpawn.value) % particlesPerTrail;
+    }
+
+    audioIsPlaying = true;
+  }
+
+
   if (sourceDot) {
-    sourceDot.position.copy(spawnPosition.value);
+    if (displayTrail) {
+      sourceDot.position.copy(displayTrail.spawnPosition);
+    }
 
     const sourcePulse = 1.0 + smoothedLevel * 1.8;
     sourceDot.scale.setScalar(sourcePulse);
@@ -536,7 +562,7 @@ function createAudioStartButton() {
   });
 
   const stopButton = document.createElement('button');
-  stopButton.textContent = 'Stop audio';
+  stopButton.textContent = 'Stop';
   stopButton.style.padding = '12px 18px';
   stopButton.style.border = '1px solid rgba(255,255,255,0.25)';
   stopButton.style.borderRadius = '8px';
@@ -545,7 +571,7 @@ function createAudioStartButton() {
   stopButton.style.font = '14px Arial, sans-serif';
   stopButton.style.cursor = 'pointer';
 
-  stopButton.addEventListener('click', stopAudio);
+  stopButton.addEventListener('click', stopAllTrails);
 
   input.addEventListener('change', async () => {
     const file = input.files[0];
@@ -563,7 +589,7 @@ function createAudioStartButton() {
   document.body.appendChild(wrapper);
 }
 
-function stopAudio() {
+function stopCurrentAudioSource() {
   if (audioSource) {
     try {
       audioSource.stop();
@@ -574,16 +600,94 @@ function stopAudio() {
     audioSource.disconnect();
     audioSource = null;
   }
+}
+
+function stopAllTrails() {
+  stopCurrentAudioSource();
 
   audioIsPlaying = false;
   audioStarted = false;
+  simulationPaused = true;
+  recordingTrail = null;
+
   smoothedLevel = 0;
 }
 
+function getTrailStartPosition(index) {
+  const goldenAngle = Math.PI * (3.0 - Math.sqrt(5.0));
+  const slot = index % maxTrailSlots;
+
+  const y = maxTrailSlots === 1
+    ? 0
+    : (slot / (maxTrailSlots - 1)) * 2.0 - 1.0;
+
+  const radius = Math.sqrt(1.0 - y * y);
+  const theta = slot * goldenAngle;
+
+  const distance = trajectoryParams.range * 0.58;
+
+  return new THREE.Vector3(
+    Math.cos(theta) * radius * distance,
+    y * distance * 0.75,
+    Math.sin(theta) * radius * distance
+  );
+}
+
+function createTrail(index) {
+  const slot = index % maxTrailSlots;
+  const startPosition = getTrailStartPosition(index);
+
+  return {
+    slot,
+    particleStart: slot * particlesPerTrail,
+    spawnIndex: 0,
+
+    position: startPosition.clone(),
+    velocity: new THREE.Vector3(),
+
+    direction: new THREE.Vector3(
+      1.0,
+      0.28 + slot * 0.07,
+      0.16 - slot * 0.05
+    ).normalize(),
+
+    targetDirection: new THREE.Vector3(),
+    wanderPhase: slot * 2.17,
+
+    spawnPosition: startPosition.clone(),
+    previousSpawnPosition: startPosition.clone(),
+    audioDrivenPosition: startPosition.clone(),
+
+    smoothedLevel: 0,
+    smoothedLowBand: 0,
+    smoothedMidBand: 0,
+    smoothedHighBand: 0,
+    previousFrequencyBalance: 0,
+
+    recordElapsed: 0,
+    loopElapsed: 0,
+    recordedFrames: [],
+    loopFrames: [],
+
+    mode: 'recording'
+  };
+}
+
 async function startAudioFile(file) {
+  stopCurrentAudioSource();
+
   if (audioContext) {
     await audioContext.close();
   }
+
+  simulationPaused = false;
+
+  const trail = createTrail(activeTrailNumber);
+  activeTrailNumber++;
+
+  activeTrails.push(trail);
+  recordingTrail = trail;
+  displayTrail = trail;
 
   audioContext = new AudioContext();
 
@@ -614,14 +718,12 @@ async function startAudioFile(file) {
   audioIsPlaying = true;
 }
 
-
-function updateAudioDrivenPosition(delta) {
-  if (!audioStarted) return;
-
+function readBreathFrameFromAnalyser() {
   analyser.getByteFrequencyData(frequencyData);
   analyser.getByteTimeDomainData(waveformData);
 
   let sum = 0;
+
   for (let i = 0; i < waveformData.length; i++) {
     const v = (waveformData[i] - 128) / 128;
     sum += v * v;
@@ -629,32 +731,6 @@ function updateAudioDrivenPosition(delta) {
 
   const rms = Math.sqrt(sum / waveformData.length);
   const level = THREE.MathUtils.clamp(rms * 8.0, 0, 1);
-  smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, level, 0.12);
-
-  const splitIndex = Math.floor(frequencyData.length * 0.18);
-
-  let lowSum = 0;
-  let highSum = 0;
-
-  for (let i = 0; i < frequencyData.length; i++) {
-    const value = frequencyData[i] / 255;
-
-    if (i < splitIndex) {
-      lowSum += value;
-    } else {
-      highSum += value;
-    }
-  }
-
-  const lowEnergy = lowSum / splitIndex;
-  const highEnergy = highSum / (frequencyData.length - splitIndex);
-
-  const balance = highEnergy - lowEnergy;
-
-  audioPhase += delta * (0.65 + smoothedLevel * 1.8);
-
-  const waveformIndex = Math.floor((audioPhase * 180) % waveformData.length);
-  const waveformValue = (waveformData[waveformIndex] - 128) / 128;
 
   const breathStart = 1;
   const breathEnd = Math.floor(frequencyData.length * 0.035);
@@ -668,15 +744,9 @@ function updateAudioDrivenPosition(delta) {
   const highStart = midEnd;
   const highEnd = Math.floor(frequencyData.length * 0.72);
 
-  let breathBand = 0;
   let lowBand = 0;
   let midBand = 0;
   let highBand = 0;
-
-  for (let i = breathStart; i < breathEnd; i++) {
-    const value = frequencyData[i] / 255;
-    breathBand += value * value;
-  }
 
   for (let i = lowStart; i < lowEnd; i++) {
     const value = frequencyData[i] / 255;
@@ -701,9 +771,87 @@ function updateAudioDrivenPosition(delta) {
   midBand = THREE.MathUtils.clamp(midBand * 2.8, 0, 1);
   highBand = THREE.MathUtils.clamp(highBand * 5.5, 0, 1);
 
-  smoothedLowBand = THREE.MathUtils.lerp(smoothedLowBand, lowBand, 0.08);
-  smoothedMidBand = THREE.MathUtils.lerp(smoothedMidBand, midBand, 0.08);
-  smoothedHighBand = THREE.MathUtils.lerp(smoothedHighBand, highBand, 0.08);
+  return {
+    level,
+    lowBand,
+    midBand,
+    highBand
+  };
+}
+
+function getLoopedBreathFrame(trail, delta) {
+  if (trail.mode === 'recording') {
+    const frame = readBreathFrameFromAnalyser();
+
+    trail.recordedFrames.push(frame);
+    trail.recordElapsed += delta;
+
+    if (trail.recordElapsed >= breathLearnDuration) {
+      trail.loopFrames = trail.recordedFrames.slice();
+      trail.mode = 'loop';
+      trail.loopElapsed = 0;
+
+      if (recordingTrail === trail) {
+        stopCurrentAudioSource();
+        recordingTrail = null;
+      }
+    }
+
+    return frame;
+  }
+
+  if (trail.mode === 'loop' && trail.loopFrames.length > 0) {
+    trail.loopElapsed += delta;
+
+    const loopProgress = (trail.loopElapsed % breathLearnDuration) / breathLearnDuration;
+    const exactIndex = loopProgress * trail.loopFrames.length;
+
+    const indexA = Math.floor(exactIndex) % trail.loopFrames.length;
+    const indexB = (indexA + 1) % trail.loopFrames.length;
+    const mixAmount = exactIndex - Math.floor(exactIndex);
+
+    const a = trail.loopFrames[indexA];
+    const b = trail.loopFrames[indexB];
+
+    return {
+      level: THREE.MathUtils.lerp(a.level, b.level, mixAmount),
+      lowBand: THREE.MathUtils.lerp(a.lowBand, b.lowBand, mixAmount),
+      midBand: THREE.MathUtils.lerp(a.midBand, b.midBand, mixAmount),
+      highBand: THREE.MathUtils.lerp(a.highBand, b.highBand, mixAmount)
+    };
+  }
+
+  return {
+    level: 0,
+    lowBand: 0,
+    midBand: 0,
+    highBand: 0
+  };
+}
+
+function updateAudioDrivenPosition(trail, delta) {
+  if (!audioStarted) return;
+
+  const breathFrame = getLoopedBreathFrame(trail, delta);
+
+  const level = breathFrame.level;
+  const lowBand = breathFrame.lowBand;
+  const midBand = breathFrame.midBand;
+  const highBand = breathFrame.highBand;
+
+  trail.smoothedLevel = THREE.MathUtils.lerp(trail.smoothedLevel, level, 0.12);
+
+  smoothedLevel = trail.smoothedLevel;
+
+  audioPhase += delta * (0.65 + trail.smoothedLevel * 1.8);
+
+  trail.smoothedLowBand = THREE.MathUtils.lerp(trail.smoothedLowBand, lowBand, 0.08);
+  trail.smoothedMidBand = THREE.MathUtils.lerp(trail.smoothedMidBand, midBand, 0.08);
+  trail.smoothedHighBand = THREE.MathUtils.lerp(trail.smoothedHighBand, highBand, 0.08);
+
+  smoothedLowBand = trail.smoothedLowBand;
+  smoothedMidBand = trail.smoothedMidBand;
+  smoothedHighBand = trail.smoothedHighBand;
 
   const totalFrequencyEnergy = THREE.MathUtils.clamp(
     smoothedLowBand + smoothedMidBand + smoothedHighBand,
@@ -716,9 +864,9 @@ function updateAudioDrivenPosition(delta) {
     smoothedMidBand * 0.35 -
     smoothedLowBand * 0.9;
 
-  const frequencyChange = frequencyBalance - previousFrequencyBalance;
-  previousFrequencyBalance = THREE.MathUtils.lerp(
-    previousFrequencyBalance,
+  const frequencyChange = frequencyBalance - trail.previousFrequencyBalance  ;
+  trail.previousFrequencyBalance = THREE.MathUtils.lerp(
+    trail.previousFrequencyBalance,
     frequencyBalance,
     0.06
   );
@@ -729,34 +877,34 @@ function updateAudioDrivenPosition(delta) {
   // La direzione non viene ricavata direttamente da una posizione circolare.
   // Qui l'audio piega una direzione persistente, così la scia continua
   // ad avanzare nello spazio invece di orbitare sempre intorno allo stesso punto.
-  trajectoryWanderPhase += delta * (
+  trail.wanderPhase += delta * (
     0.45 +
     motionAmount * 1.35 +
     smoothedHighBand * 1.4
   ) * trajectoryParams.directionChange;
 
-  trajectoryTargetDirection.set(
-    Math.sin(trajectoryWanderPhase * 0.73 + smoothedMidBand * 5.0),
-    Math.sin(trajectoryWanderPhase * 1.11 + frequencyBalance * 3.0),
-    Math.cos(trajectoryWanderPhase * 0.91 + smoothedLowBand * 4.0)
+  trail.targetDirection.set(
+    Math.sin(trail.wanderPhase * 0.73 + smoothedMidBand * 5.0),
+    Math.sin(trail.wanderPhase * 1.11 + frequencyBalance * 3.0),
+    Math.cos(trail.wanderPhase * 0.91 + smoothedLowBand * 4.0)
   );
 
   // I cambiamenti di spettro danno una sterzata, ma non resettano la traiettoria.
-  trajectoryTargetDirection.x += frequencyChange * 3.0;
-  trajectoryTargetDirection.y += (smoothedHighBand - smoothedLowBand) * 1.4;
-  trajectoryTargetDirection.z += (smoothedMidBand - 0.25) * 1.2;
+  trail.targetDirection.x += frequencyChange * 3.0;
+  trail.targetDirection.y += (smoothedHighBand - smoothedLowBand) * 1.4;
+  trail.targetDirection.z += (smoothedMidBand - 0.25) * 1.2;
 
-  if (trajectoryTargetDirection.lengthSq() > 0.0001) {
-    trajectoryTargetDirection.normalize();
+  if (trail.targetDirection.lengthSq() > 0.0001) {
+    trail.targetDirection.normalize();
   }
 
   // La direzione reale cambia lentamente: questo elimina l'effetto "giro in tondo"
   // e crea una scia che prende sempre nuove direzioni.
-  trajectoryDirection.lerp(
-    trajectoryTargetDirection,
+  trail.direction.lerp(
+    trail.targetDirection,
     0.018 + motionAmount * 0.05 + Math.abs(frequencyChange) * 0.08
   );
-  trajectoryDirection.normalize();
+  trail.direction.normalize();
 
   // Velocità della testa della scia.
   // Se il suono è tranquillo, questa velocità diventa molto bassa.
@@ -766,30 +914,30 @@ function updateAudioDrivenPosition(delta) {
     smoothedHighBand * 0.045) * trajectoryParams.speed;
 
   // Accelerazione morbida nella direzione persistente.
-  trajectoryVelocity.lerp(
-    trajectoryDirection.clone().multiplyScalar(trajectorySpeed * trajectoryParams.forwardPush),
+  trail.velocity.lerp(
+    trail.direction.clone().multiplyScalar(trajectorySpeed * trajectoryParams.forwardPush),
     0.04 + motionAmount * 0.09
   );
 
   // Freno: più il suono è calmo, più la testa si ferma.
   const calmBrake = THREE.MathUtils.lerp(0.88, 0.985, motionAmount);
-  trajectoryVelocity.multiplyScalar(calmBrake);
+  trail.velocity.multiplyScalar(calmBrake);
 
-  trajectoryPosition.add(trajectoryVelocity);
+  trail.position.add(trail.velocity);
 
   // Limite spaziale morbido: invece di rimbalzare/orbitare sul bordo,
   // la scia viene reindirizzata verso una nuova direzione interna.
   const maxDistance = trajectoryParams.range;
-  if (trajectoryPosition.length() > maxDistance) {
-    const inwardDirection = trajectoryPosition.clone().normalize().multiplyScalar(-1);
+  if (trail.position.length() > maxDistance) {
+    const inwardDirection = trail.position.clone().normalize().multiplyScalar(-1);
 
-    trajectoryPosition.setLength(maxDistance * 0.96);
-    trajectoryDirection.lerp(inwardDirection, 0.32).normalize();
-    trajectoryVelocity.add(inwardDirection.multiplyScalar(trajectorySpeed * 0.65));
-    trajectoryVelocity.multiplyScalar(0.78);
+    trail.position.setLength(maxDistance * 0.96);
+    trail.direction.lerp(inwardDirection, 0.32).normalize();
+    trail.velocity.add(inwardDirection.multiplyScalar(trajectorySpeed * 0.65));
+    trail.velocity.multiplyScalar(0.78);
   }
 
-  audioDrivenPosition.copy(trajectoryPosition);
+  trail.audioDrivenPosition.copy(trail.position);
 
   turbAmplitude.value = THREE.MathUtils.lerp(
     turbAmplitude.value,
