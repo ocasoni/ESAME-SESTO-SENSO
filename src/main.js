@@ -6,6 +6,7 @@ import {
   abs,
   atan,
   color,
+  floor,
   deltaTime,
   float,
   Fn,
@@ -33,6 +34,7 @@ import {
 import './style.css';
 
 let camera, scene, renderer, controls, clock, light;
+let sourceDot;
 let updateParticles, spawnParticles;
 let getInstanceColor;
 
@@ -46,18 +48,21 @@ const audioDrivenPosition = new THREE.Vector3();
 let audioPhase = 0;
 let smoothedLevel = 0;
 
-const audioTargetPosition = new THREE.Vector3();
-const audioRandomPosition = new THREE.Vector3();
+const trajectoryPosition = new THREE.Vector3();
+const trajectoryVelocity = new THREE.Vector3();
+const trajectoryDirection = new THREE.Vector3(1, 0.28, 0.16).normalize();
+const trajectoryTargetDirection = new THREE.Vector3();
+let trajectoryWanderPhase = 0;
 
-const audioVelocity = new THREE.Vector3();
-let previousLevel = 0;
-let directionCooldown = 0;
+let smoothedLowBand = 0;
+let smoothedMidBand = 0;
+let smoothedHighBand = 0;
+let previousFrequencyBalance = 0;
 
 let audioSource = null;
 let audioGain = null;
 let audioIsPlaying = false;
 
-const spawnParticleSize = uniform(1.0);
 const spawnSpread = uniform(0.08);
 const spawnLinksWidth = uniform(0.005);
 
@@ -66,8 +71,8 @@ const cymaticLow = uniform(0.0);
 const cymaticMid = uniform(0.0);
 const cymaticHigh = uniform(0.0);
 const cymaticPhase = uniform(0.0);
-const cymaticScale = uniform(0.55);
-const cymaticDepth = uniform(0.18);
+const cymaticScale = uniform(1.1);
+const cymaticDepth = uniform(0.12);
 
 const TWO_PI = PI.mul(2.0);
 
@@ -78,28 +83,36 @@ const raycaster = new THREE.Raycaster();
 
 const nbParticles = Math.pow(2, 14);
 
-const timeScale = uniform(1.0);
-const particleLifetime = uniform(0.8);
-const particleSize = uniform(2.5);
-const linksWidth = uniform(0.025);
+const timeScale = uniform(0.8);
+const particleLifetime = uniform(0.65);
+const particleSize = uniform(0.45);
 
 const colorOffset = uniform(0.0);
-const colorVariance = uniform(2.0);
-const colorRotationSpeed = uniform(1.0);
+const colorBrightness = uniform(1.25);
+const colorRotationSpeed = uniform(0.4);
+const trailHue = uniform(0.58);
 
 const spawnIndex = uniform(0);
-const nbToSpawn = uniform(5);
+const nbToSpawn = uniform(50);
 const spawnPosition = uniform(vec3(0.0));
 const previousSpawnPosition = uniform(vec3(0.0));
 
-const turbFrequency = uniform(0.5);
-const turbAmplitude = uniform(0.5);
+const turbFrequency = uniform(0.35);
+const turbAmplitude = uniform(1.2);
 const turbOctaves = uniform(2);
 const turbLacunarity = uniform(2.0);
-const turbGain = uniform(0.5);
-const turbFriction = uniform(0.01);
+const turbGain = uniform(0.35);
+const turbFriction = uniform(0.08);
 
 const freezeLifeThreshold = uniform(0.90);
+
+const trajectoryParams = {
+  speed: 1.35,
+  smoothness: 0.12,
+  range: 4.2,
+  directionChange: 0.72,
+  forwardPush: 1.0
+};
 
 init();
 
@@ -127,7 +140,9 @@ async function init() {
   await renderer.init();
 
   getInstanceColor = Fn(([i]) => {
-    return hue(color(0x0000ff), colorOffset.add(mx_fractal_noise_float(i.toFloat().mul(0.1), 2, 2.0, 0.5, colorVariance)));
+    const base = hue(color(0x0066ff), trailHue.add(colorOffset));
+
+    return base.mul(colorBrightness);
   });
 
   const particlePositions = storage(new THREE.StorageInstancedBufferAttribute(nbParticles, 4), 'vec4', nbParticles);
@@ -147,10 +162,11 @@ async function init() {
       particleProperties.element(instanceIndex).x.assign(1.0);
       particleProperties.element(instanceIndex).y.assign(0.005);
       particleProperties.element(instanceIndex).z.assign(1.0);
+      particleProperties.element(instanceIndex).w.assign(0.0);
     })().compute(nbParticles)
   );
 
-  const particleQuadSize = 0.05;
+  const particleQuadSize = 0.12;
   const particleGeom = new THREE.PlaneGeometry(particleQuadSize, particleQuadSize);
 
   const particleMaterial = new THREE.SpriteNodeMaterial();
@@ -162,13 +178,21 @@ async function init() {
 
   particleMaterial.colorNode = Fn(() => {
     const life = particlePositions.toAttribute().w;
-    return particleColors.toAttribute().xyz.mul(life);
+    const reveal = particleProperties.toAttribute().w;
+    const liveBrightness = colorBrightness.mul(0.65).add(0.35);
+
+    return particleColors.toAttribute().xyz
+      .mul(life)
+      .mul(reveal)
+      .mul(liveBrightness);
   })();
 
   particleMaterial.opacityNode = Fn(() => {
     const circle = step(uv().xy.sub(0.5).length(), 0.5);
     const life = particlePositions.toAttribute().w;
-    return circle.mul(life);
+    const reveal = particleProperties.toAttribute().w;
+
+    return circle.mul(life).mul(reveal);
   })();
 
   const particleMesh = new THREE.InstancedMesh(particleGeom, particleMaterial, nbParticles);
@@ -176,34 +200,59 @@ async function init() {
   particleMesh.frustumCulled = false;
   scene.add(particleMesh);
 
+  const sourceDotGeom = new THREE.SphereGeometry(0.035, 24, 24);
+  const sourceDotMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff66ff,
+    transparent: true,
+    opacity: 1.0
+  });
+
+  sourceDot = new THREE.Mesh(sourceDotGeom, sourceDotMaterial);
+  sourceDot.frustumCulled = false;
+  scene.add(sourceDot);
+
   updateParticles = Fn(() => {
     const position = particlePositions.element(instanceIndex).xyz;
     const life = particlePositions.element(instanceIndex).w;
-    const velocity = particleVelocities.element(instanceIndex).xyz;
+    const targetPosition = particleVelocities.element(instanceIndex).xyz;
+    const reveal = particleProperties.element(instanceIndex).w;
+
     const dt = deltaTime.mul(0.1).mul(timeScale);
 
     If(life.greaterThan(0.0), () => {
       const frozen = particleProperties.element(instanceIndex).z;
 
       If(frozen.lessThan(0.5), () => {
+        const settleSpeed = float(0.18)
+          .add(cymaticLevel.mul(0.12))
+          .add(cymaticHigh.mul(0.05));
+
+        position.assign(
+          mix(position, targetPosition, settleSpeed)
+        );
+
         const localVel = mx_fractal_noise_vec3(
           position.mul(turbFrequency),
           turbOctaves,
           turbLacunarity,
           turbGain,
           turbAmplitude
-        ).mul(life.add(0.01));
+        ).mul(life.add(0.01)).mul(0.018);
 
-        velocity.addAssign(localVel);
-        velocity.mulAssign(turbFriction.oneMinus());
-        position.addAssign(velocity.mul(dt));
+        position.addAssign(localVel);
+
+        reveal.addAssign(dt.mul(10.0));
+
+        If(reveal.greaterThan(1.0), () => {
+          reveal.assign(1.0);
+        });
 
         life.subAssign(dt.mul(particleLifetime.reciprocal()));
 
         If(life.lessThan(freezeLifeThreshold), () => {
           life.assign(freezeLifeThreshold);
-          velocity.assign(vec3(0.0));
           frozen.assign(1.0);
+          reveal.assign(1.0);
         });
       });
     });
@@ -222,7 +271,7 @@ async function init() {
     particleColor.xyz.assign(getInstanceColor(particleIndex));
     particleColor.w.assign(1.0);
 
-    particleProperty.x.assign(spawnParticleSize);
+    particleProperty.x.assign(particleSize);
     particleProperty.y.assign(spawnLinksWidth);
     particleProperty.z.assign(0.0);
 
@@ -235,51 +284,99 @@ async function init() {
     const seedA = hash(particleIndex);
     const seedB = hash(particleIndex.add(17));
     const seedC = hash(particleIndex.add(43));
+    const seedD = hash(particleIndex.add(91));
 
     const theta = seedA.mul(TWO_PI);
 
-    const modeA = float(2.0).add(cymaticLow.mul(10.0));
-    const modeB = float(3.0).add(cymaticMid.mul(14.0));
-    const modeC = float(4.0).add(cymaticHigh.mul(18.0));
+    const modeLow = float(2.0).add(cymaticLow.mul(9.0));
+    const modeMid = float(3.0).add(cymaticMid.mul(13.0));
+    const modeHigh = float(5.0).add(cymaticHigh.mul(22.0));
 
-    const waveA = sin(theta.mul(modeA).add(cymaticPhase));
-    const waveB = cos(theta.mul(modeB).sub(cymaticPhase.mul(0.7)));
-    const waveC = sin(theta.mul(modeC).add(seedB.mul(PI)));
-
-    const cymaticField = abs(waveA.mul(waveB).add(waveC.mul(0.45)));
-
-    const baseRadius = cymaticScale.mul(0.25).add(cymaticLevel.mul(cymaticScale));
-    const ring = seedB.mul(0.85).add(0.15);
-
-    const radius = baseRadius.mul(ring).mul(
-      float(0.35).add(cymaticField.mul(1.45))
+    const radialWave = abs(
+      sin(theta.mul(modeLow).add(cymaticPhase))
     );
 
-    const xStretch = float(0.55)
-      .add(abs(sin(theta.mul(modeA))).mul(1.25))
-      .add(cymaticMid.mul(0.8));
+    const angularWave = abs(
+      cos(theta.mul(modeMid).sub(cymaticPhase.mul(0.65)))
+    );
 
-    const yStretch = float(0.55)
-      .add(abs(cos(theta.mul(modeB))).mul(1.25))
-      .add(cymaticHigh.mul(0.8));
+    const detailWave = abs(
+      sin(theta.mul(modeHigh).add(seedC.mul(TWO_PI)))
+    );
 
-    const x = cos(theta).mul(radius).mul(xStretch);
-    const y = sin(theta).mul(radius).mul(yStretch);
+    const cymaticField = radialWave
+      .mul(0.45)
+      .add(angularWave.mul(0.4))
+      .add(detailWave.mul(0.35));
 
-    const z = sin(theta.mul(modeC).add(cymaticPhase))
+    const bandCount = float(3.0)
+      .add(cymaticLow.mul(4.0))
+      .add(cymaticMid.mul(5.0))
+      .add(cymaticHigh.mul(3.0));
+
+    const bandId = floor(seedB.mul(bandCount));
+
+    const bandRadius = bandId
+      .add(0.5)
+      .div(bandCount);
+
+    const bandVibration = abs(
+      sin(
+        bandRadius
+          .mul(modeLow)
+          .mul(PI)
+          .add(cymaticPhase)
+      )
+    );
+
+    const nodeAttraction = bandVibration
+      .mul(0.55)
+      .add(cymaticField.mul(0.45));
+
+    const microSpread = seedD
+      .sub(0.5)
+      .mul(0.08)
+      .mul(float(1.0).add(cymaticHigh));
+
+    const audioRadius = float(0.18).add(cymaticLevel);
+
+    const radius = cymaticScale
+      .mul(audioRadius)
+      .mul(
+        bandRadius
+          .add(nodeAttraction.mul(0.38))
+          .add(microSpread)
+      );
+
+    const xDeform = float(0.75)
+      .add(radialWave.mul(0.65))
+      .add(cymaticMid.mul(0.45));
+
+    const yDeform = float(0.75)
+      .add(angularWave.mul(0.65))
+      .add(cymaticHigh.mul(0.45));
+
+    const x = cos(theta).mul(radius).mul(xDeform);
+    const y = sin(theta).mul(radius).mul(yDeform);
+
+    const z = detailWave
+      .sub(0.5)
       .mul(cymaticDepth)
-      .mul(cymaticField)
-      .mul(float(0.4).add(cymaticLevel));
+      .mul(float(0.5).add(cymaticLevel));
 
     const cymaticOffset = vec3(x, y, z);
 
-    position.assign(pos.add(cymaticOffset));
+    // Tutte le particelle nascono dal punto unico della scia.
+    position.assign(pos);
 
+    // Però la loro posizione finale è quella della sezione cimatico-sonora,
+    // esattamente come prima.
     velocity.assign(
-      cymaticOffset
-        .mul(0.35)
-        .add(vec3(seedC.sub(0.5)).mul(0.04))
+      pos.add(cymaticOffset)
     );
+
+    // Nascono quasi invisibili, così non disegnano righe mentre si aprono.
+    particleProperty.w.assign(0.80);
   })().compute(nbToSpawn.value).label('Spawn Particles');
 
   const backgroundGeom = new THREE.IcosahedronGeometry(100, 5).applyMatrix4(new THREE.Matrix4().makeScale(-1, 1, 1));
@@ -314,9 +411,15 @@ async function init() {
   partFolder.add(nbToSpawn, 'value', 1, 100, 1).name('Spawn rate');
   partFolder.add(particleSize, 'value', 0.01, 3.0, 0.01).name('Size');
   partFolder.add(particleLifetime, 'value', 0.01, 2.0, 0.01).name('Lifetime');
-  partFolder.add(colorVariance, 'value', 0.0, 10.0, 0.01).name('Color variance');
+  partFolder.add(trailHue, 'value', 0.0, 1.0, 0.01).name('Trail hue');
   partFolder.add(colorRotationSpeed, 'value', 0.0, 5.0, 0.01).name('Color rotation speed');
 
+  const trajectoryFolder = gui.addFolder('Trajectory');
+  trajectoryFolder.add(trajectoryParams, 'speed', 0.1, 3.0, 0.01).name('Audio speed');
+  trajectoryFolder.add(trajectoryParams, 'smoothness', 0.02, 0.5, 0.01).name('Smoothness');
+  trajectoryFolder.add(trajectoryParams, 'range', 1.0, 8.0, 0.1).name('Range');
+  trajectoryFolder.add(trajectoryParams, 'directionChange', 0.05, 1.5, 0.01).name('Direction change');
+  trajectoryFolder.add(trajectoryParams, 'forwardPush', 0.1, 2.5, 0.01).name('Forward push');
 
   const cymaticFolder = gui.addFolder('Cymatics');
   cymaticFolder.add(cymaticScale, 'value', 0.05, 2.0, 0.01).name('Section scale');
@@ -326,7 +429,6 @@ async function init() {
   const turbFolder = gui.addFolder('Turbulence');
   turbFolder.add(turbFriction, 'value', 0.0, 0.3, 0.01).name('Friction');
   turbFolder.add(turbFrequency, 'value', 0.0, 1.0, 0.01).name('Frequency');
-  turbFolder.add(turbAmplitude, 'value', 0.0, 10.0, 0.01).name('Amplitude');
   turbFolder.add(turbOctaves, 'value', 1, 9, 1).name('Octaves');
   turbFolder.add(turbLacunarity, 'value', 1.0, 5.0, 0.01).name('Lacunarity');
   turbFolder.add(turbGain, 'value', 0.0, 1.0, 0.01).name('Gain');
@@ -363,15 +465,29 @@ function animate() {
 
   if (audioStarted) {
     updateAudioDrivenPosition(delta);
-    spawnPosition.value.lerp(audioDrivenPosition, 0.38);
+    spawnPosition.value.lerp(audioDrivenPosition, trajectoryParams.smoothness);
   } else {
     raycastPlane.normal.applyEuler(camera.rotation);
     updatePointer();
     spawnPosition.value.lerp(scenePointer, 0.1);
   }
 
+  if (sourceDot) {
+    sourceDot.position.copy(spawnPosition.value);
+
+    const sourcePulse = 1.0 + smoothedLevel * 1.8;
+    sourceDot.scale.setScalar(sourcePulse);
+
+    const brightness = THREE.MathUtils.clamp(colorBrightness.value, 0.6, 2.4);
+    sourceDot.material.color.setRGB(
+      brightness,
+      0.25 * brightness,
+      brightness
+    );
+  }
+
   if (audioIsPlaying) {
-    colorOffset.value += delta * colorRotationSpeed.value * timeScale.value;
+    colorOffset.value += delta * colorRotationSpeed.value * timeScale.value * 0.03;
   }
 
   light.position.set(
@@ -540,59 +656,144 @@ function updateAudioDrivenPosition(delta) {
   const waveformIndex = Math.floor((audioPhase * 180) % waveformData.length);
   const waveformValue = (waveformData[waveformIndex] - 128) / 128;
 
-  const third = Math.floor(frequencyData.length / 3);
+  const breathStart = 1;
+  const breathEnd = Math.floor(frequencyData.length * 0.035);
 
+  const lowStart = breathEnd;
+  const lowEnd = Math.floor(frequencyData.length * 0.12);
+
+  const midStart = lowEnd;
+  const midEnd = Math.floor(frequencyData.length * 0.34);
+
+  const highStart = midEnd;
+  const highEnd = Math.floor(frequencyData.length * 0.72);
+
+  let breathBand = 0;
   let lowBand = 0;
   let midBand = 0;
   let highBand = 0;
 
-  for (let i = 0; i < frequencyData.length; i++) {
+  for (let i = breathStart; i < breathEnd; i++) {
     const value = frequencyData[i] / 255;
-
-    if (i < third) {
-      lowBand += value;
-    } else if (i < third * 2) {
-      midBand += value;
-    } else {
-      highBand += value;
-    }
+    breathBand += value * value;
   }
 
-  lowBand /= third;
-  midBand /= third;
-  highBand /= frequencyData.length - third * 2;
+  for (let i = lowStart; i < lowEnd; i++) {
+    const value = frequencyData[i] / 255;
+    lowBand += value * value;
+  }
 
-  const xFromMid = (midBand - 0.18) * 10.0;
-  const yFromHighLow = (highBand - lowBand) * 12.0;
-  const zFromLow = (lowBand - 0.18) * 10.0;
+  for (let i = midStart; i < midEnd; i++) {
+    const value = frequencyData[i] / 255;
+    midBand += value * value;
+  }
 
-  const waveformKick = waveformValue * (1.0 + smoothedLevel * 4.0);
+  for (let i = highStart; i < highEnd; i++) {
+    const value = frequencyData[i] / 255;
+    highBand += value * value;
+  }
 
-  const x =
-    xFromMid +
-    Math.sin(audioPhase * 0.7) * 1.2 +
-    waveformKick * 0.8;
+  lowBand = Math.sqrt(lowBand / Math.max(1, lowEnd - lowStart));
+  midBand = Math.sqrt(midBand / Math.max(1, midEnd - midStart));
+  highBand = Math.sqrt(highBand / Math.max(1, highEnd - highStart));
 
-  const y =
-    yFromHighLow +
-    waveformKick * 1.6;
+  lowBand = THREE.MathUtils.clamp(lowBand * 2.2, 0, 1);
+  midBand = THREE.MathUtils.clamp(midBand * 2.8, 0, 1);
+  highBand = THREE.MathUtils.clamp(highBand * 5.5, 0, 1);
 
-  const z =
-    zFromLow +
-    Math.sin(audioPhase * 0.53 + midBand * 4.0) * 1.8 -
-    waveformKick * 0.6;
+  smoothedLowBand = THREE.MathUtils.lerp(smoothedLowBand, lowBand, 0.08);
+  smoothedMidBand = THREE.MathUtils.lerp(smoothedMidBand, midBand, 0.08);
+  smoothedHighBand = THREE.MathUtils.lerp(smoothedHighBand, highBand, 0.08);
 
-  audioDrivenPosition.set(x, y, z);
+  const totalFrequencyEnergy = THREE.MathUtils.clamp(
+    smoothedLowBand + smoothedMidBand + smoothedHighBand,
+    0,
+    1
+  );
+
+  const frequencyBalance =
+    smoothedHighBand * 1.2 +
+    smoothedMidBand * 0.35 -
+    smoothedLowBand * 0.9;
+
+  const frequencyChange = frequencyBalance - previousFrequencyBalance;
+  previousFrequencyBalance = THREE.MathUtils.lerp(
+    previousFrequencyBalance,
+    frequencyBalance,
+    0.06
+  );
+
+    // Movimento quasi fermo quando il suono è calmo.
+  const motionAmount = THREE.MathUtils.smoothstep(totalFrequencyEnergy, 0.08, 0.55);
+
+  // La direzione non viene ricavata direttamente da una posizione circolare.
+  // Qui l'audio piega una direzione persistente, così la scia continua
+  // ad avanzare nello spazio invece di orbitare sempre intorno allo stesso punto.
+  trajectoryWanderPhase += delta * (
+    0.45 +
+    motionAmount * 1.35 +
+    smoothedHighBand * 1.4
+  ) * trajectoryParams.directionChange;
+
+  trajectoryTargetDirection.set(
+    Math.sin(trajectoryWanderPhase * 0.73 + smoothedMidBand * 5.0),
+    Math.sin(trajectoryWanderPhase * 1.11 + frequencyBalance * 3.0),
+    Math.cos(trajectoryWanderPhase * 0.91 + smoothedLowBand * 4.0)
+  );
+
+  // I cambiamenti di spettro danno una sterzata, ma non resettano la traiettoria.
+  trajectoryTargetDirection.x += frequencyChange * 3.0;
+  trajectoryTargetDirection.y += (smoothedHighBand - smoothedLowBand) * 1.4;
+  trajectoryTargetDirection.z += (smoothedMidBand - 0.25) * 1.2;
+
+  if (trajectoryTargetDirection.lengthSq() > 0.0001) {
+    trajectoryTargetDirection.normalize();
+  }
+
+  // La direzione reale cambia lentamente: questo elimina l'effetto "giro in tondo"
+  // e crea una scia che prende sempre nuove direzioni.
+  trajectoryDirection.lerp(
+    trajectoryTargetDirection,
+    0.018 + motionAmount * 0.05 + Math.abs(frequencyChange) * 0.08
+  );
+  trajectoryDirection.normalize();
+
+  // Velocità della testa della scia.
+  // Se il suono è tranquillo, questa velocità diventa molto bassa.
+  const trajectorySpeed =
+    (0.025 +
+    motionAmount * 0.18 +
+    smoothedHighBand * 0.045) * trajectoryParams.speed;
+
+  // Accelerazione morbida nella direzione persistente.
+  trajectoryVelocity.lerp(
+    trajectoryDirection.clone().multiplyScalar(trajectorySpeed * trajectoryParams.forwardPush),
+    0.04 + motionAmount * 0.09
+  );
+
+  // Freno: più il suono è calmo, più la testa si ferma.
+  const calmBrake = THREE.MathUtils.lerp(0.88, 0.985, motionAmount);
+  trajectoryVelocity.multiplyScalar(calmBrake);
+
+  trajectoryPosition.add(trajectoryVelocity);
+
+  // Limite spaziale morbido: invece di rimbalzare/orbitare sul bordo,
+  // la scia viene reindirizzata verso una nuova direzione interna.
+  const maxDistance = trajectoryParams.range;
+  if (trajectoryPosition.length() > maxDistance) {
+    const inwardDirection = trajectoryPosition.clone().normalize().multiplyScalar(-1);
+
+    trajectoryPosition.setLength(maxDistance * 0.96);
+    trajectoryDirection.lerp(inwardDirection, 0.32).normalize();
+    trajectoryVelocity.add(inwardDirection.multiplyScalar(trajectorySpeed * 0.65));
+    trajectoryVelocity.multiplyScalar(0.78);
+  }
+
+  audioDrivenPosition.copy(trajectoryPosition);
 
   turbAmplitude.value = THREE.MathUtils.lerp(
     turbAmplitude.value,
-    0.7 + smoothedLevel * 8.0,
-    0.08
-  );
-
-  spawnParticleSize.value = THREE.MathUtils.lerp(
-    spawnParticleSize.value,
-    0.35 + smoothedLevel * 1.25,
+    0.25 + smoothedLevel * 2.4 + highBand * 1.2,
     0.08
   );
 
@@ -601,30 +802,49 @@ function updateAudioDrivenPosition(delta) {
     8 + smoothedLevel * 70,
     0.08
   );
+
+  cymaticLevel.value = THREE.MathUtils.lerp(
+    cymaticLevel.value,
+    smoothedLevel,
+    0.16
+  );
+
+  cymaticLow.value = THREE.MathUtils.lerp(
+    cymaticLow.value,
+    lowBand,
+    0.14
+  );
+
+  cymaticMid.value = THREE.MathUtils.lerp(
+    cymaticMid.value,
+    midBand,
+    0.14
+  );
+
+  cymaticHigh.value = THREE.MathUtils.lerp(
+    cymaticHigh.value,
+    highBand,
+    0.14
+  );
+
+  cymaticPhase.value += delta * (1.2 + smoothedLevel * 5.0);
+
+  const brightnessContrast = THREE.MathUtils.clamp(
+    (highBand * 2.2) - (lowBand * 1.4) + midBand * 0.25,
+    -1.2,
+    1.2
+  );
+
+  const audioBrightness = THREE.MathUtils.clamp(
+    0.95 + brightnessContrast * 1.6 + smoothedLevel * 0.55,
+    0.08,
+    4.0
+  );
+
+  colorBrightness.value = THREE.MathUtils.lerp(
+    colorBrightness.value,
+    audioBrightness,
+    0.28
+  );
 }
 
-cymaticLevel.value = THREE.MathUtils.lerp(
-  cymaticLevel.value,
-  smoothedLevel,
-  0.16
-);
-
-cymaticLow.value = THREE.MathUtils.lerp(
-  cymaticLow.value,
-  lowBand,
-  0.14
-);
-
-cymaticMid.value = THREE.MathUtils.lerp(
-  cymaticMid.value,
-  midBand,
-  0.14
-);
-
-cymaticHigh.value = THREE.MathUtils.lerp(
-  cymaticHigh.value,
-  highBand,
-  0.14
-);
-
-cymaticPhase.value += delta * (1.2 + smoothedLevel * 5.0);
