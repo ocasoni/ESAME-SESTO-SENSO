@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu';
-import GUI from 'lil-gui';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import WebGPU from 'three/addons/capabilities/WebGPU.js';
+import GUI from 'lil-gui';
 import {
+  abs,
   atan,
   color,
   deltaTime,
@@ -18,8 +19,6 @@ import {
   mix,
   mx_fractal_noise_float,
   mx_fractal_noise_vec3,
-  pass,
-  pcurve,
   PI,
   storage,
   step,
@@ -61,6 +60,14 @@ let audioIsPlaying = false;
 const spawnParticleSize = uniform(1.0);
 const spawnSpread = uniform(0.08);
 const spawnLinksWidth = uniform(0.005);
+
+const cymaticLevel = uniform(0.0);
+const cymaticLow = uniform(0.0);
+const cymaticMid = uniform(0.0);
+const cymaticHigh = uniform(0.0);
+const cymaticPhase = uniform(0.0);
+const cymaticScale = uniform(0.55);
+const cymaticDepth = uniform(0.18);
 
 const TWO_PI = PI.mul(2.0);
 
@@ -169,37 +176,6 @@ async function init() {
   particleMesh.frustumCulled = false;
   scene.add(particleMesh);
 
-  const linksIndices = [];
-  for (let i = 0; i < nbParticles; i++) {
-    const baseIndex = i * 8;
-    for (let j = 0; j < 2; j++) {
-      const offset = baseIndex + j * 4;
-      linksIndices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3);
-    }
-  }
-
-  const nbVertices = nbParticles * 8;
-  const linksVerticesSBA = new THREE.StorageBufferAttribute(nbVertices, 4);
-  const linksColorsSBA = new THREE.StorageBufferAttribute(nbVertices, 4);
-
-  const linksGeom = new THREE.BufferGeometry();
-  linksGeom.setAttribute('position', linksVerticesSBA);
-  linksGeom.setAttribute('color', linksColorsSBA);
-  linksGeom.setIndex(linksIndices);
-
-  const linksMaterial = new THREE.MeshBasicNodeMaterial();
-  linksMaterial.vertexColors = true;
-  linksMaterial.side = THREE.DoubleSide;
-  linksMaterial.transparent = true;
-  linksMaterial.depthWrite = false;
-  linksMaterial.depthTest = false;
-  linksMaterial.blending = THREE.AdditiveBlending;
-  linksMaterial.opacityNode = storage(linksColorsSBA, 'vec4', linksColorsSBA.count).toAttribute().w;
-
-  const linksMesh = new THREE.Mesh(linksGeom, linksMaterial);
-  linksMesh.frustumCulled = false;
-  scene.add(linksMesh);
-
   updateParticles = Fn(() => {
     const position = particlePositions.element(instanceIndex).xyz;
     const life = particlePositions.element(instanceIndex).w;
@@ -230,69 +206,6 @@ async function init() {
           frozen.assign(1.0);
         });
       });
-
-      const closestDist1 = float(10000.0).toVar();
-      const closestPos1 = vec3(0.0).toVar();
-      const closestLife1 = float(0.0).toVar();
-      const closestDist2 = float(10000.0).toVar();
-      const closestPos2 = vec3(0.0).toVar();
-      const closestLife2 = float(0.0).toVar();
-
-      Loop(nbParticles, ({ i }) => {
-        const otherPart = particlePositions.element(i);
-
-        If(i.notEqual(instanceIndex).and(otherPart.w.greaterThan(0.0)), () => {
-          const otherPosition = otherPart.xyz;
-          const dist = position.sub(otherPosition).lengthSq();
-          const moreThanZero = dist.greaterThan(0.0);
-
-          If(dist.lessThan(closestDist1).and(moreThanZero), () => {
-            closestDist1.assign(dist);
-            closestPos1.assign(otherPosition.xyz);
-            closestLife1.assign(otherPart.w);
-          }).ElseIf(dist.lessThan(closestDist2).and(moreThanZero), () => {
-            closestDist2.assign(dist);
-            closestPos2.assign(otherPosition.xyz);
-            closestLife2.assign(otherPart.w);
-          });
-        });
-      });
-
-      const frozenLinksWidth = particleProperties.element(instanceIndex).y;
-
-      const linksPositions = storage(linksVerticesSBA, 'vec4', linksVerticesSBA.count);
-      const linksColors = storage(linksColorsSBA, 'vec4', linksColorsSBA.count);
-      const firstLinkIndex = instanceIndex.mul(8);
-      const secondLinkIndex = firstLinkIndex.add(4);
-
-      linksPositions.element(firstLinkIndex).xyz.assign(position);
-      linksPositions.element(firstLinkIndex).y.addAssign(frozenLinksWidth);
-      linksPositions.element(firstLinkIndex.add(1)).xyz.assign(position);
-      linksPositions.element(firstLinkIndex.add(1)).y.addAssign(frozenLinksWidth.negate());
-      linksPositions.element(firstLinkIndex.add(2)).xyz.assign(closestPos1);
-      linksPositions.element(firstLinkIndex.add(2)).y.addAssign(frozenLinksWidth.negate());
-      linksPositions.element(firstLinkIndex.add(3)).xyz.assign(closestPos1);
-      linksPositions.element(firstLinkIndex.add(3)).y.addAssign(frozenLinksWidth);
-
-      linksPositions.element(secondLinkIndex).xyz.assign(position);
-      linksPositions.element(secondLinkIndex).y.addAssign(frozenLinksWidth);
-      linksPositions.element(secondLinkIndex.add(1)).xyz.assign(position);
-      linksPositions.element(secondLinkIndex.add(1)).y.addAssign(frozenLinksWidth.negate());
-      linksPositions.element(secondLinkIndex.add(2)).xyz.assign(closestPos2);
-      linksPositions.element(secondLinkIndex.add(2)).y.addAssign(frozenLinksWidth.negate());
-      linksPositions.element(secondLinkIndex.add(3)).xyz.assign(closestPos2);
-      linksPositions.element(secondLinkIndex.add(3)).y.addAssign(frozenLinksWidth);
-
-      const linkColor = particleColors.element(instanceIndex).xyz;
-      const l1 = max(0.0, min(closestLife1, life)).pow(0.8);
-      const l2 = max(0.0, min(closestLife2, life)).pow(0.8);
-
-      Loop(4, ({ i }) => {
-        linksColors.element(firstLinkIndex.add(i)).xyz.assign(linkColor);
-        linksColors.element(firstLinkIndex.add(i)).w.assign(l1);
-        linksColors.element(secondLinkIndex.add(i)).xyz.assign(linkColor);
-        linksColors.element(secondLinkIndex.add(i)).w.assign(l2);
-      });
     });
   })().compute(nbParticles).label('Update Particles');
 
@@ -313,17 +226,60 @@ async function init() {
     particleProperty.y.assign(spawnLinksWidth);
     particleProperty.z.assign(0.0);
 
-    const rRange = float(0.01);
-    const rTheta = hash(particleIndex).mul(TWO_PI);
-    const rPhi = hash(particleIndex.add(1)).mul(PI);
-    const rx = sin(rTheta).mul(cos(rPhi));
-    const ry = sin(rTheta).mul(sin(rPhi));
-    const rz = cos(rTheta);
-    const rDir = vec3(rx, ry, rz);
+    const pos = mix(
+      previousSpawnPosition,
+      spawnPosition,
+      instanceIndex.toFloat().div(nbToSpawn.sub(1).toFloat()).clamp()
+    );
 
-    const pos = mix(previousSpawnPosition, spawnPosition, instanceIndex.toFloat().div(nbToSpawn.sub(1).toFloat()).clamp());
-    position.assign(pos.add(rDir.mul(rRange)));
-    velocity.assign(rDir.mul(5.0));
+    const seedA = hash(particleIndex);
+    const seedB = hash(particleIndex.add(17));
+    const seedC = hash(particleIndex.add(43));
+
+    const theta = seedA.mul(TWO_PI);
+
+    const modeA = float(2.0).add(cymaticLow.mul(10.0));
+    const modeB = float(3.0).add(cymaticMid.mul(14.0));
+    const modeC = float(4.0).add(cymaticHigh.mul(18.0));
+
+    const waveA = sin(theta.mul(modeA).add(cymaticPhase));
+    const waveB = cos(theta.mul(modeB).sub(cymaticPhase.mul(0.7)));
+    const waveC = sin(theta.mul(modeC).add(seedB.mul(PI)));
+
+    const cymaticField = abs(waveA.mul(waveB).add(waveC.mul(0.45)));
+
+    const baseRadius = cymaticScale.mul(0.25).add(cymaticLevel.mul(cymaticScale));
+    const ring = seedB.mul(0.85).add(0.15);
+
+    const radius = baseRadius.mul(ring).mul(
+      float(0.35).add(cymaticField.mul(1.45))
+    );
+
+    const xStretch = float(0.55)
+      .add(abs(sin(theta.mul(modeA))).mul(1.25))
+      .add(cymaticMid.mul(0.8));
+
+    const yStretch = float(0.55)
+      .add(abs(cos(theta.mul(modeB))).mul(1.25))
+      .add(cymaticHigh.mul(0.8));
+
+    const x = cos(theta).mul(radius).mul(xStretch);
+    const y = sin(theta).mul(radius).mul(yStretch);
+
+    const z = sin(theta.mul(modeC).add(cymaticPhase))
+      .mul(cymaticDepth)
+      .mul(cymaticField)
+      .mul(float(0.4).add(cymaticLevel));
+
+    const cymaticOffset = vec3(x, y, z);
+
+    position.assign(pos.add(cymaticOffset));
+
+    velocity.assign(
+      cymaticOffset
+        .mul(0.35)
+        .add(vec3(seedC.sub(0.5)).mul(0.04))
+    );
   })().compute(nbToSpawn.value).label('Spawn Particles');
 
   const backgroundGeom = new THREE.IcosahedronGeometry(100, 5).applyMatrix4(new THREE.Matrix4().makeScale(-1, 1, 1));
@@ -358,9 +314,14 @@ async function init() {
   partFolder.add(nbToSpawn, 'value', 1, 100, 1).name('Spawn rate');
   partFolder.add(particleSize, 'value', 0.01, 3.0, 0.01).name('Size');
   partFolder.add(particleLifetime, 'value', 0.01, 2.0, 0.01).name('Lifetime');
-  partFolder.add(linksWidth, 'value', 0.001, 0.1, 0.001).name('Links width');
   partFolder.add(colorVariance, 'value', 0.0, 10.0, 0.01).name('Color variance');
   partFolder.add(colorRotationSpeed, 'value', 0.0, 5.0, 0.01).name('Color rotation speed');
+
+
+  const cymaticFolder = gui.addFolder('Cymatics');
+  cymaticFolder.add(cymaticScale, 'value', 0.05, 2.0, 0.01).name('Section scale');
+  cymaticFolder.add(cymaticDepth, 'value', 0.0, 1.0, 0.01).name('Section depth');
+
 
   const turbFolder = gui.addFolder('Turbulence');
   turbFolder.add(turbFriction, 'value', 0.0, 0.3, 0.01).name('Friction');
@@ -641,3 +602,29 @@ function updateAudioDrivenPosition(delta) {
     0.08
   );
 }
+
+cymaticLevel.value = THREE.MathUtils.lerp(
+  cymaticLevel.value,
+  smoothedLevel,
+  0.16
+);
+
+cymaticLow.value = THREE.MathUtils.lerp(
+  cymaticLow.value,
+  lowBand,
+  0.14
+);
+
+cymaticMid.value = THREE.MathUtils.lerp(
+  cymaticMid.value,
+  midBand,
+  0.14
+);
+
+cymaticHigh.value = THREE.MathUtils.lerp(
+  cymaticHigh.value,
+  highBand,
+  0.14
+);
+
+cymaticPhase.value += delta * (1.2 + smoothedLevel * 5.0);
