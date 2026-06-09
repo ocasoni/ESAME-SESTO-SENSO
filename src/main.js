@@ -100,6 +100,7 @@ const colorOffset = uniform(0.0);
 const colorBrightness = uniform(1.25);
 const colorRotationSpeed = uniform(0.4);
 const trailHue = uniform(0.58);
+const currentTrailHue = uniform(0.58);
 
 const spawnIndex = uniform(0);
 const nbToSpawn = uniform(50);
@@ -149,7 +150,7 @@ async function init() {
   await renderer.init();
 
   getInstanceColor = Fn(([i]) => {
-    const base = hue(color(0x0066ff), trailHue.add(colorOffset));
+    const base = hue(color(0x0066ff), currentTrailHue.add(colorOffset));
 
     return base.mul(colorBrightness);
   });
@@ -422,7 +423,6 @@ async function init() {
   partFolder.add(nbToSpawn, 'value', 1, 100, 1).name('Spawn rate');
   partFolder.add(particleSize, 'value', 0.01, 3.0, 0.01).name('Size');
   partFolder.add(particleLifetime, 'value', 0.01, 2.0, 0.01).name('Lifetime');
-  partFolder.add(trailHue, 'value', 0.0, 1.0, 0.01).name('Trail hue');
   partFolder.add(colorRotationSpeed, 'value', 0.0, 5.0, 0.01).name('Color rotation speed');
 
   const trajectoryFolder = gui.addFolder('Trajectory');
@@ -482,6 +482,7 @@ function animate() {
       );
 
       currentTrailParticleStart.value = trail.particleStart;
+      currentTrailHue.value = trail.hue;
       spawnIndex.value = trail.spawnIndex;
 
       previousSpawnPosition.value.copy(trail.previousSpawnPosition);
@@ -505,11 +506,15 @@ function animate() {
     sourceDot.scale.setScalar(sourcePulse);
 
     const brightness = THREE.MathUtils.clamp(colorBrightness.value, 0.6, 2.4);
-    sourceDot.material.color.setRGB(
-      brightness,
-      0.25 * brightness,
-      brightness
-    );
+      if (displayTrail) {
+      const dotColor = new THREE.Color().setHSL(displayTrail.hue, 1.0, 0.65);
+
+      sourceDot.material.color.setRGB(
+        dotColor.r * brightness,
+        dotColor.g * brightness,
+        dotColor.b * brightness
+      );
+    }
   }
 
   if (audioIsPlaying) {
@@ -614,33 +619,40 @@ function stopAllTrails() {
 }
 
 function getTrailStartPosition(index) {
-  const goldenAngle = Math.PI * (3.0 - Math.sqrt(5.0));
   const slot = index % maxTrailSlots;
 
-  const y = maxTrailSlots === 1
-    ? 0
-    : (slot / (maxTrailSlots - 1)) * 2.0 - 1.0;
+  const positions = [
+    new THREE.Vector3(-3.4,  2.1,  1.4),
+    new THREE.Vector3( 3.4, -2.0, -1.5),
+    new THREE.Vector3(-3.2, -2.2, -1.6),
+    new THREE.Vector3( 3.2,  2.0,  1.7),
+    new THREE.Vector3( 0.0,  3.2, -2.0),
+    new THREE.Vector3( 0.0, -3.2,  2.0)
+  ];
 
-  const radius = Math.sqrt(1.0 - y * y);
-  const theta = slot * goldenAngle;
-
-  const distance = trajectoryParams.range * 0.58;
-
-  return new THREE.Vector3(
-    Math.cos(theta) * radius * distance,
-    y * distance * 0.75,
-    Math.sin(theta) * radius * distance
-  );
+  return positions[slot].clone();
 }
 
 function createTrail(index) {
   const slot = index % maxTrailSlots;
   const startPosition = getTrailStartPosition(index);
+  const trailHues = [
+    0.58, // blu / ciano
+    0.82, // viola / magenta
+    0.08, // arancio
+    0.33, // verde
+    0.95, // rosa / rosso
+    0.48  // turchese
+  ];
+
+  const trailHueValue = trailHues[slot];
 
   return {
     slot,
     particleStart: slot * particlesPerTrail,
     spawnIndex: 0,
+
+    hue: trailHueValue,
 
     position: startPosition.clone(),
     velocity: new THREE.Vector3(),
@@ -928,6 +940,7 @@ function updateAudioDrivenPosition(trail, delta) {
   // Limite spaziale morbido: invece di rimbalzare/orbitare sul bordo,
   // la scia viene reindirizzata verso una nuova direzione interna.
   const maxDistance = trajectoryParams.range;
+
   if (trail.position.length() > maxDistance) {
     const inwardDirection = trail.position.clone().normalize().multiplyScalar(-1);
 
