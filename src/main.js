@@ -62,6 +62,10 @@ let audioSource = null;
 let audioGain = null;
 let audioIsPlaying = false;
 
+let microphoneStream = null;
+let microphoneSource = null;
+let selectedMicDeviceId = null;
+
 const breathLearnDuration = 30.0;
 let simulationPaused = false;
 
@@ -99,8 +103,9 @@ const particleSize = uniform(0.45);
 const colorOffset = uniform(0.0);
 const colorBrightness = uniform(1.25);
 const colorRotationSpeed = uniform(0.4);
-const trailHue = uniform(0.58);
-const currentTrailHue = uniform(0.58);
+const currentTrailColorA = uniform(vec3(0.0, 0.35, 1.0));
+const currentTrailColorB = uniform(vec3(0.0, 1.0, 1.0));
+const currentTrailColorC = uniform(vec3(0.7, 0.0, 1.0));
 
 const spawnIndex = uniform(0);
 const nbToSpawn = uniform(50);
@@ -122,6 +127,14 @@ const trajectoryParams = {
   range: 4.2,
   directionChange: 0.72,
   forwardPush: 1.0
+};
+
+const microphoneSettings = {
+  inputGain: 4.0,
+  breathSensitivity: 18.0,
+  lowSensitivity: 4.0,
+  midSensitivity: 4.5,
+  highSensitivity: 7.0
 };
 
 init();
@@ -149,10 +162,23 @@ async function init() {
 
   await renderer.init();
 
-  getInstanceColor = Fn(([i]) => {
-    const base = hue(color(0x0066ff), currentTrailHue.add(colorOffset));
+ getInstanceColor = Fn(([i]) => {
+    const seedA = hash(i);
+    const seedB = hash(i.add(31));
 
-    return base.mul(colorBrightness);
+    const colorMixA = mix(
+      currentTrailColorA,
+      currentTrailColorB,
+      seedA
+    );
+
+    const colorMixB = mix(
+      colorMixA,
+      currentTrailColorC,
+      seedB.mul(0.45)
+    );
+
+    return colorMixB.mul(colorBrightness);
   });
 
   const particlePositions = storage(new THREE.StorageInstancedBufferAttribute(nbParticles, 4), 'vec4', nbParticles);
@@ -436,6 +462,17 @@ async function init() {
   cymaticFolder.add(cymaticScale, 'value', 0.05, 2.0, 0.01).name('Section scale');
   cymaticFolder.add(cymaticDepth, 'value', 0.0, 1.0, 0.01).name('Section depth');
 
+  const micFolder = gui.addFolder('Microphone');
+  micFolder.add(microphoneSettings, 'inputGain', 1.0, 20.0, 0.1).name('Input gain').onChange((value) => {
+    if (audioGain) {
+      audioGain.gain.value = value;
+    }
+  });
+
+  micFolder.add(microphoneSettings, 'breathSensitivity', 4.0, 60.0, 0.5).name('Breath sensitivity');
+  micFolder.add(microphoneSettings, 'lowSensitivity', 1.0, 20.0, 0.1).name('Low sensitivity');
+  micFolder.add(microphoneSettings, 'midSensitivity', 1.0, 20.0, 0.1).name('Mid sensitivity');
+  micFolder.add(microphoneSettings, 'highSensitivity', 1.0, 25.0, 0.1).name('High sensitivity');
 
   const turbFolder = gui.addFolder('Turbulence');
   turbFolder.add(turbFriction, 'value', 0.0, 0.3, 0.01).name('Friction');
@@ -482,7 +519,9 @@ function animate() {
       );
 
       currentTrailParticleStart.value = trail.particleStart;
-      currentTrailHue.value = trail.hue;
+      currentTrailColorA.value.copy(trail.colorA);
+      currentTrailColorB.value.copy(trail.colorB);
+      currentTrailColorC.value.copy(trail.colorC);
       spawnIndex.value = trail.spawnIndex;
 
       previousSpawnPosition.value.copy(trail.previousSpawnPosition);
@@ -507,7 +546,11 @@ function animate() {
 
     const brightness = THREE.MathUtils.clamp(colorBrightness.value, 0.6, 2.4);
       if (displayTrail) {
-      const dotColor = new THREE.Color().setHSL(displayTrail.hue, 1.0, 0.65);
+      const dotColor = new THREE.Color().setHSL(
+        displayTrail.hue,
+        displayTrail.saturation,
+        0.65
+      );
 
       sourceDot.material.color.setRGB(
         dotColor.r * brightness,
@@ -541,14 +584,21 @@ function createAudioStartButton() {
   wrapper.style.display = 'flex';
   wrapper.style.gap = '10px';
   wrapper.style.alignItems = 'center';
+  wrapper.style.flexWrap = 'wrap';
+  wrapper.style.justifyContent = 'center';
 
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'audio/*';
-  input.style.display = 'none';
+  const micSelect = document.createElement('select');
+  micSelect.style.padding = '12px 14px';
+  micSelect.style.border = '1px solid rgba(255,255,255,0.25)';
+  micSelect.style.borderRadius = '8px';
+  micSelect.style.background = 'rgba(20,23,26,0.95)';
+  micSelect.style.color = '#fff';
+  micSelect.style.font = '14px Arial, sans-serif';
+  micSelect.style.cursor = 'pointer';
+  micSelect.style.maxWidth = '280px';
 
   const button = document.createElement('button');
-  button.textContent = 'Load audio';
+  button.textContent = 'Start microphone';
   button.style.padding = '12px 18px';
   button.style.border = '1px solid rgba(255,255,255,0.25)';
   button.style.borderRadius = '8px';
@@ -556,15 +606,6 @@ function createAudioStartButton() {
   button.style.color = '#fff';
   button.style.font = '14px Arial, sans-serif';
   button.style.cursor = 'pointer';
-
-  const label = document.createElement('span');
-  label.textContent = 'No file selected';
-  label.style.color = 'rgba(255,255,255,0.75)';
-  label.style.font = '13px Arial, sans-serif';
-
-  button.addEventListener('click', () => {
-    input.click();
-  });
 
   const stopButton = document.createElement('button');
   stopButton.textContent = 'Stop';
@@ -576,22 +617,68 @@ function createAudioStartButton() {
   stopButton.style.font = '14px Arial, sans-serif';
   stopButton.style.cursor = 'pointer';
 
-  stopButton.addEventListener('click', stopAllTrails);
+  const label = document.createElement('span');
+  label.textContent = 'Select the headphones microphone, then start';
+  label.style.color = 'rgba(255,255,255,0.75)';
+  label.style.font = '13px Arial, sans-serif';
 
-  input.addEventListener('change', async () => {
-    const file = input.files[0];
-    if (!file) return;
+  async function refreshMicrophones() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const microphones = devices.filter((device) => device.kind === 'audioinput');
 
-    label.textContent = file.name;
-    await startAudioFile(file);
+      micSelect.innerHTML = '';
+
+      if (microphones.length === 0) {
+        const option = document.createElement('option');
+        option.textContent = 'No microphone found';
+        option.value = '';
+        micSelect.appendChild(option);
+        return;
+      }
+
+      microphones.forEach((device, index) => {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = device.label || `Microphone ${index + 1}`;
+        micSelect.appendChild(option);
+      });
+
+      selectedMicDeviceId = micSelect.value;
+    } catch (error) {
+      label.textContent = 'Microphone list unavailable';
+      console.error(error);
+    }
+  }
+
+  micSelect.addEventListener('change', () => {
+    selectedMicDeviceId = micSelect.value;
   });
 
-  wrapper.appendChild(input);
+  button.addEventListener('click', async () => {
+    await startMicrophoneRecording(selectedMicDeviceId);
+    await refreshMicrophones();
+
+    const selectedOption = micSelect.options[micSelect.selectedIndex];
+    label.textContent = selectedOption
+      ? `Recording from: ${selectedOption.textContent}`
+      : 'Recording from microphone';
+  });
+
+  stopButton.addEventListener('click', stopAllTrails);
+
+  wrapper.appendChild(micSelect);
   wrapper.appendChild(button);
   wrapper.appendChild(stopButton);
   wrapper.appendChild(label);
 
   document.body.appendChild(wrapper);
+
+  refreshMicrophones();
+
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', refreshMicrophones);
+  }
 }
 
 function stopCurrentAudioSource() {
@@ -604,6 +691,24 @@ function stopCurrentAudioSource() {
 
     audioSource.disconnect();
     audioSource = null;
+  }
+
+  if (microphoneSource) {
+    microphoneSource.disconnect();
+    microphoneSource = null;
+  }
+
+  if (microphoneStream) {
+    microphoneStream.getTracks().forEach((track) => {
+      track.stop();
+    });
+
+    microphoneStream = null;
+  }
+
+  if (audioGain) {
+    audioGain.disconnect();
+    audioGain = null;
   }
 }
 
@@ -621,38 +726,94 @@ function stopAllTrails() {
 function getTrailStartPosition(index) {
   const slot = index % maxTrailSlots;
 
+  // La prima traccia parte sempre dal centro dello schermo/scena.
+  if (index === 0) {
+    return new THREE.Vector3(0.0, 0.0, 0.0);
+  }
+
+  // Distanza grande tra le altre scie.
+  const trailDistance = 8.0;
+
   const positions = [
-    new THREE.Vector3(-3.4,  2.1,  1.4),
-    new THREE.Vector3( 3.4, -2.0, -1.5),
-    new THREE.Vector3(-3.2, -2.2, -1.6),
-    new THREE.Vector3( 3.2,  2.0,  1.7),
-    new THREE.Vector3( 0.0,  3.2, -2.0),
-    new THREE.Vector3( 0.0, -3.2,  2.0)
+    // slot 0 non viene usato per la prima traccia,
+    // ma resta qui per sicurezza quando i trail fanno il giro dopo maxTrailSlots.
+    new THREE.Vector3(0.0, 0.0, 0.0),
+
+    new THREE.Vector3( 1.0, -0.7, -0.9),
+    new THREE.Vector3(-0.8, -1.0,  1.1),
+    new THREE.Vector3( 0.9,  1.0, -1.2),
+    new THREE.Vector3( 0.2,  1.4,  1.0),
+    new THREE.Vector3(-0.3, -1.5, -1.1)
   ];
 
-  return positions[slot].clone();
+  return positions[slot]
+    .clone()
+    .normalize()
+    .multiplyScalar(trailDistance);
 }
 
 function createTrail(index) {
   const slot = index % maxTrailSlots;
   const startPosition = getTrailStartPosition(index);
-  const trailHues = [
-    0.58, // blu / ciano
-    0.82, // viola / magenta
-    0.08, // arancio
-    0.33, // verde
-    0.95, // rosa / rosso
-    0.48  // turchese
+  const homePosition = startPosition.clone();
+  const trailPalettes = [
+    {
+      hue: 0.58,
+      colorA: new THREE.Vector3(0.0, 0.35, 1.0), // blu elettrico
+      colorB: new THREE.Vector3(0.0, 1.0, 1.0),  // ciano
+      colorC: new THREE.Vector3(0.4, 0.0, 1.0),  // violetto
+      saturation: 1.0
+    },
+    {
+      hue: 0.08,
+      colorA: new THREE.Vector3(1.0, 0.18, 0.0), // rosso/arancio
+      colorB: new THREE.Vector3(1.0, 0.75, 0.0), // oro
+      colorC: new THREE.Vector3(1.0, 0.02, 0.25), // rosa caldo
+      saturation: 1.0
+    },
+    {
+      hue: 0.33,
+      colorA: new THREE.Vector3(0.0, 1.0, 0.15), // verde acido
+      colorB: new THREE.Vector3(0.55, 1.0, 0.0), // lime
+      colorC: new THREE.Vector3(0.0, 0.75, 0.35), // smeraldo
+      saturation: 1.0
+    },
+    {
+      hue: 0.78,
+      colorA: new THREE.Vector3(0.65, 0.0, 1.0), // viola
+      colorB: new THREE.Vector3(1.0, 0.0, 0.95), // magenta
+      colorC: new THREE.Vector3(0.25, 0.0, 1.0), // indaco
+      saturation: 1.0
+    },
+    {
+      hue: 0.55,
+      colorA: new THREE.Vector3(0.0, 0.9, 1.0), // acqua
+      colorB: new THREE.Vector3(0.0, 0.45, 1.0), // azzurro
+      colorC: new THREE.Vector3(0.0, 1.0, 0.65), // menta
+      saturation: 1.0
+    },
+    {
+      hue: 0.95,
+      colorA: new THREE.Vector3(1.0, 0.0, 0.35), // fucsia/rosso
+      colorB: new THREE.Vector3(1.0, 0.0, 0.75), // pink
+      colorC: new THREE.Vector3(0.9, 0.0, 0.15), // cremisi
+      saturation: 1.0
+    }
   ];
 
-  const trailHueValue = trailHues[slot];
+  const trailPalette = trailPalettes[slot];
 
   return {
     slot,
     particleStart: slot * particlesPerTrail,
     spawnIndex: 0,
 
-    hue: trailHueValue,
+    hue: trailPalette.hue,
+    colorA: trailPalette.colorA,
+    colorB: trailPalette.colorB,
+    colorC: trailPalette.colorC,
+    saturation: trailPalette.saturation,
+    homePosition,
 
     position: startPosition.clone(),
     velocity: new THREE.Vector3(),
@@ -685,7 +846,7 @@ function createTrail(index) {
   };
 }
 
-async function startAudioFile(file) {
+async function startMicrophoneRecording(deviceId = null) {
   stopCurrentAudioSource();
 
   if (audioContext) {
@@ -710,21 +871,35 @@ async function startAudioFile(file) {
   frequencyData = new Uint8Array(analyser.frequencyBinCount);
   waveformData = new Uint8Array(analyser.fftSize);
 
-  const arrayBuffer = await file.arrayBuffer();
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  const audioConstraints = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    channelCount: 1
+  };
 
-  audioSource = audioContext.createBufferSource();
-  audioSource.buffer = audioBuffer;
-  audioSource.loop = true;
+  if (deviceId) {
+    audioConstraints.deviceId = {
+      exact: deviceId
+    };
+  }
+
+  microphoneStream = await navigator.mediaDevices.getUserMedia({
+    audio: audioConstraints,
+    video: false
+  });
+
+  microphoneSource = audioContext.createMediaStreamSource(microphoneStream);
 
   audioGain = audioContext.createGain();
-  audioGain.gain.value = 0.8;
+  audioGain.gain.value = microphoneSettings.inputGain;
 
-  audioSource.connect(audioGain);
+  microphoneSource.connect(audioGain);
   audioGain.connect(analyser);
-  analyser.connect(audioContext.destination);
 
-  audioSource.start();
+  // Non colleghiamo analyser a audioContext.destination,
+  // così non senti il microfono rientrare nelle casse/cuffie.
+  // analyser.connect(audioContext.destination);
 
   audioStarted = true;
   audioIsPlaying = true;
@@ -742,7 +917,14 @@ function readBreathFrameFromAnalyser() {
   }
 
   const rms = Math.sqrt(sum / waveformData.length);
-  const level = THREE.MathUtils.clamp(rms * 8.0, 0, 1);
+  const noiseFloor = 0.006;
+  const cleanedRms = Math.max(0, rms - noiseFloor);
+
+  const level = THREE.MathUtils.clamp(
+    cleanedRms * microphoneSettings.breathSensitivity,
+    0,
+    1
+  );
 
   const breathStart = 1;
   const breathEnd = Math.floor(frequencyData.length * 0.035);
@@ -779,9 +961,9 @@ function readBreathFrameFromAnalyser() {
   midBand = Math.sqrt(midBand / Math.max(1, midEnd - midStart));
   highBand = Math.sqrt(highBand / Math.max(1, highEnd - highStart));
 
-  lowBand = THREE.MathUtils.clamp(lowBand * 2.2, 0, 1);
-  midBand = THREE.MathUtils.clamp(midBand * 2.8, 0, 1);
-  highBand = THREE.MathUtils.clamp(highBand * 5.5, 0, 1);
+  lowBand = THREE.MathUtils.clamp(lowBand * microphoneSettings.lowSensitivity, 0, 1);
+  midBand = THREE.MathUtils.clamp(midBand * microphoneSettings.midSensitivity, 0, 1);
+  highBand = THREE.MathUtils.clamp(highBand * microphoneSettings.highSensitivity, 0, 1);
 
   return {
     level,
@@ -941,10 +1123,19 @@ function updateAudioDrivenPosition(trail, delta) {
   // la scia viene reindirizzata verso una nuova direzione interna.
   const maxDistance = trajectoryParams.range;
 
-  if (trail.position.length() > maxDistance) {
-    const inwardDirection = trail.position.clone().normalize().multiplyScalar(-1);
+  // Ora il limite non è più rispetto al centro globale della scena,
+  // ma rispetto al centro personale della singola scia.
+  const offsetFromHome = trail.position.clone().sub(trail.homePosition);
 
-    trail.position.setLength(maxDistance * 0.96);
+  if (offsetFromHome.length() > maxDistance) {
+    const inwardDirection = offsetFromHome.clone().normalize().multiplyScalar(-1);
+
+    trail.position.copy(
+      trail.homePosition.clone().add(
+        offsetFromHome.setLength(maxDistance * 0.96)
+      )
+    );
+
     trail.direction.lerp(inwardDirection, 0.32).normalize();
     trail.velocity.add(inwardDirection.multiplyScalar(trajectorySpeed * 0.65));
     trail.velocity.multiplyScalar(0.78);
