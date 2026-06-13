@@ -1,0 +1,194 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #0f1216;
+  color: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.mic-page {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 28px 20px 48px;
+  text-align: center;
+}
+
+.mic-badge {
+  display: inline-block;
+  margin-bottom: 18px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.mic-icon {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  margin: 0 auto 20px;
+}
+
+.mic-icon-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(61, 108, 255, 0.45);
+  background: radial-gradient(circle at 30% 30%, rgba(61, 108, 255, 0.35), transparent 60%);
+}
+
+.mic-icon-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #7ec8ff, #3d6cff);
+  box-shadow: 0 0 18px rgba(61, 108, 255, 0.55);
+}
+
+.mic-page.is-recording .mic-icon-ring {
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+.mic-page.is-recording .mic-icon-dot {
+  background: linear-gradient(180deg, #ffb4b4, #ff4646);
+  box-shadow: 0 0 18px rgba(255, 70, 70, 0.55);
+}
+
+@keyframes mic-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.75; }
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: 1.55rem;
+}
+
+.mic-lead {
+  margin: 0 0 20px;
+  line-height: 1.5;
+  opacity: 0.82;
+  font-size: 0.95rem;
+}
+
+.mic-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  margin-bottom: 18px;
+}
+
+.mic-wave span {
+  display: block;
+  width: 5px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #14b8a6, #3d6cff);
+  opacity: 0.35;
+}
+
+.mic-page.is-recording .mic-wave span {
+  opacity: 1;
+  animation: mic-bar 0.8s ease-in-out infinite;
+}
+
+.mic-page.is-recording .mic-wave span:nth-child(1) { animation-delay: 0s; }
+.mic-page.is-recording .mic-wave span:nth-child(2) { animation-delay: 0.1s; }
+.mic-page.is-recording .mic-wave span:nth-child(3) { animation-delay: 0.2s; }
+.mic-page.is-recording .mic-wave span:nth-child(4) { animation-delay: 0.1s; }
+.mic-page.is-recording .mic-wave span:nth-child(5) { animation-delay: 0s; }
+
+@keyframes mic-bar {
+  0%, 100% { height: 10px; }
+  50% { height: 32px; }
+}
+
+.mic-status {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.85rem;
+  margin-bottom: 14px;
+}
+
+.mic-status.is-recording {
+  background: rgba(255, 70, 70, 0.2);
+  color: #ffb4b4;
+}
+
+.mic-status.is-ready {
+  background: rgba(20, 184, 166, 0.18);
+  color: #7ef0df;
+}
+
+.mic-status.is-error {
+  background: rgba(255, 120, 0, 0.18);
+  color: #ffc58a;
+}
+
+.mic-timer {
+  font-size: 2.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 24px;
+  letter-spacing: 0.06em;
+}
+
+.mic-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.mic-btn {
+  min-width: 100px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mic-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mic-btn-primary {
+  background: linear-gradient(135deg, #3d6cff, #0ea5e9);
+  border-color: transparent;
+}
+
+.mic-btn-accent {
+  background: linear-gradient(135deg, #14b8a6, #22d3ee);
+  border-color: transparent;
+}
+
+.mic-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  opacity: 0.65;
+}

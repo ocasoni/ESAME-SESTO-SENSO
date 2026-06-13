@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0f1216" />
+    <title>Registra respiro — Sesto Senso</title>
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: #0f1216;
+        color: #fff;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+    </style>
+    <link rel="stylesheet" href="./mic.css" />
+  </head>
+  <body>
+    <main class="mic-page">
+      <div class="mic-badge">Sesto Senso</div>
+
+      <div class="mic-icon" aria-hidden="true">
+        <span class="mic-icon-ring"></span>
+        <span class="mic-icon-dot"></span>
+      </div>
+
+      <h1>Registra un respiro</h1>
+      <p class="mic-lead">
+        Registra un suono, una parola o un respiro.<br />
+        Verrà inviato alla visualizzazione sul PC.
+      </p>
+
+      <div class="mic-wave" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+
+      <div class="mic-status" id="mic-status">Caricamento…</div>
+
+      <div class="mic-timer" id="mic-timer">00:00</div>
+
+      <div class="mic-actions">
+        <button type="button" id="mic-record" class="mic-btn mic-btn-primary">Registra</button>
+        <button type="button" id="mic-stop" class="mic-btn" disabled>Ferma</button>
+        <button type="button" id="mic-send" class="mic-btn mic-btn-accent" disabled>Invia</button>
+      </div>
+
+      <p class="mic-hint" id="mic-hint">Premi Registra, parla o respira, poi Ferma e Invia.</p>
+    </main>
+
+    <script type="module" src="./mic.js"></script>
+  </body>
+</html>

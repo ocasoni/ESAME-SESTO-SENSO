@@ -1,0 +1,62 @@
+export function startUploadPolling({ apiUrl, intervalMs = 1500, onNewUpload, onStatusChange }) {
+  let lastSeenId = 0;
+  let stopped = false;
+  let timerId = null;
+  let bootstrapped = false;
+
+  async function bootstrapCursor() {
+    try {
+      const response = await fetch(`${apiUrl}/latest?since=0`);
+      if (response.ok) {
+        const data = await response.json();
+        lastSeenId = data.latestId || 0;
+      }
+    } catch (error) {
+      console.warn('Impossibile sincronizzare il cursore upload:', error);
+    } finally {
+      bootstrapped = true;
+      poll();
+    }
+  }
+
+  async function poll() {
+    if (stopped || !bootstrapped) return;
+
+    try {
+      const response = await fetch(`${apiUrl}/latest?since=${lastSeenId}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      onStatusChange?.('connected', lastSeenId);
+
+      for (const upload of data.uploads) {
+        await onNewUpload(upload);
+        lastSeenId = Math.max(lastSeenId, upload.id);
+      }
+    } catch (error) {
+      onStatusChange?.('error', lastSeenId, error);
+    }
+
+    timerId = setTimeout(poll, intervalMs);
+  }
+
+  bootstrapCursor();
+
+  return () => {
+    stopped = true;
+    if (timerId) clearTimeout(timerId);
+  };
+}
+
+export async function fetchUploadAudio(apiUrl, uploadId) {
+  const response = await fetch(`${apiUrl}/audio/${uploadId}`);
+
+  if (!response.ok) {
+    throw new Error(`Audio ${uploadId} non trovato`);
+  }
+
+  return response.arrayBuffer();
+}

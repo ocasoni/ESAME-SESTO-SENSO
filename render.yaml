@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: esame-sesto-senso-api
+    env: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: UPLOAD_SECRET
+        sync: false

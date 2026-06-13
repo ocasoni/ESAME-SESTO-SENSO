@@ -32,6 +32,16 @@ import {
   cos,
 } from 'three/tsl';
 import './style.css';
+import QRCode from 'qrcode';
+import { buildMicPageUrl, resolveNetworkUrls } from './networkUrls.js';
+import { extractBreathFramesFromArrayBuffer } from './audioFromUpload.js';
+import { fetchUploadAudio, startUploadPolling } from './telegramPoll.js';
+
+let resolvedApiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+const POLL_INTERVAL_MS = Number(import.meta.env.VITE_POLL_INTERVAL_MS || 1500);
+
+let stopPolling = null;
+let phoneUiElements = null;
 
 let camera, scene, renderer, controls, clock, light;
 let sourceDot;
@@ -437,7 +447,7 @@ async function init() {
 
   window.addEventListener('resize', onWindowResize);
 
-  createAudioStartButton();
+  createPhoneUploadUI();
 
   const gui = new GUI({ title: 'Parameters' });
 
@@ -462,7 +472,7 @@ async function init() {
   cymaticFolder.add(cymaticScale, 'value', 0.05, 2.0, 0.01).name('Section scale');
   cymaticFolder.add(cymaticDepth, 'value', 0.0, 1.0, 0.01).name('Section depth');
 
-  const micFolder = gui.addFolder('Microphone');
+  const micFolder = gui.addFolder('Phone audio analysis');
   micFolder.add(microphoneSettings, 'inputGain', 1.0, 20.0, 0.1).name('Input gain').onChange((value) => {
     if (audioGain) {
       audioGain.gain.value = value;
@@ -574,110 +584,158 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-function createAudioStartButton() {
-  const wrapper = document.createElement('div');
-  wrapper.style.position = 'absolute';
-  wrapper.style.left = '50%';
-  wrapper.style.bottom = '32px';
-  wrapper.style.transform = 'translateX(-50%)';
-  wrapper.style.zIndex = '20';
-  wrapper.style.display = 'flex';
-  wrapper.style.gap = '10px';
-  wrapper.style.alignItems = 'center';
-  wrapper.style.flexWrap = 'wrap';
-  wrapper.style.justifyContent = 'center';
+function getMicPageUrl(micBase) {
+  return buildMicPageUrl(
+    micBase,
+    resolvedApiUrl,
+    import.meta.env.VITE_UPLOAD_SECRET
+  );
+}
 
-  const micSelect = document.createElement('select');
-  micSelect.style.padding = '12px 14px';
-  micSelect.style.border = '1px solid rgba(255,255,255,0.25)';
-  micSelect.style.borderRadius = '8px';
-  micSelect.style.background = 'rgba(20,23,26,0.95)';
-  micSelect.style.color = '#fff';
-  micSelect.style.font = '14px Arial, sans-serif';
-  micSelect.style.cursor = 'pointer';
-  micSelect.style.maxWidth = '280px';
+function updatePhoneStatus(text, type = '') {
+  if (!phoneUiElements) return;
+  phoneUiElements.status.textContent = text;
+  phoneUiElements.status.className = `phone-status ${type}`.trim();
+}
 
-  const button = document.createElement('button');
-  button.textContent = 'Start microphone';
-  button.style.padding = '12px 18px';
-  button.style.border = '1px solid rgba(255,255,255,0.25)';
-  button.style.borderRadius = '8px';
-  button.style.background = 'rgba(255,255,255,0.1)';
-  button.style.color = '#fff';
-  button.style.font = '14px Arial, sans-serif';
-  button.style.cursor = 'pointer';
+async function createPhoneUploadUI() {
+  const network = await resolveNetworkUrls();
+  resolvedApiUrl = network.apiUrl;
+
+  const panel = document.createElement('div');
+  panel.id = 'phone-upload-panel';
+
+  const title = document.createElement('h2');
+  title.textContent = 'Registra dal telefono';
+  panel.appendChild(title);
+
+  const qrWrap = document.createElement('div');
+  qrWrap.className = 'phone-qr-wrap';
+  const qrCanvas = document.createElement('canvas');
+  qrWrap.appendChild(qrCanvas);
+  panel.appendChild(qrWrap);
+
+  const hint = document.createElement('p');
+  hint.className = 'phone-hint';
+  hint.textContent = network.mode === 'production'
+    ? 'Scansiona il QR: si apre la pagina su GitHub (funziona con 4G/Wi‑Fi).'
+    : network.isPhoneReady
+      ? 'Telefono e PC sulla stessa Wi‑Fi. Scansiona il QR e registra un respiro.'
+      : 'Per il telefono: crea .env con VITE_MIC_PAGE_URL (GitHub) e VITE_API_URL (Render), oppure usa la stessa Wi‑Fi.';
+  panel.appendChild(hint);
+
+  const networkNote = document.createElement('p');
+  networkNote.className = 'phone-network-note';
+  networkNote.textContent = network.lanIp
+    ? `IP rete: ${network.lanIp} — apri sul PC: http://${network.lanIp}:${window.location.port || '5173'}`
+    : 'IP di rete non rilevato';
+  panel.appendChild(networkNote);
+
+  const status = document.createElement('div');
+  status.className = 'phone-status';
+  status.textContent = 'In attesa del backend…';
+  panel.appendChild(status);
+
+  const link = document.createElement('a');
+  link.className = 'phone-link';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  panel.appendChild(link);
 
   const stopButton = document.createElement('button');
-  stopButton.textContent = 'Stop';
-  stopButton.style.padding = '12px 18px';
-  stopButton.style.border = '1px solid rgba(255,255,255,0.25)';
-  stopButton.style.borderRadius = '8px';
-  stopButton.style.background = 'rgba(255,255,255,0.1)';
-  stopButton.style.color = '#fff';
-  stopButton.style.font = '14px Arial, sans-serif';
-  stopButton.style.cursor = 'pointer';
+  stopButton.type = 'button';
+  stopButton.className = 'phone-stop-btn';
+  stopButton.textContent = 'Ferma tutte le scie';
+  stopButton.addEventListener('click', stopAllTrails);
+  panel.appendChild(stopButton);
 
-  const label = document.createElement('span');
-  label.textContent = 'Select the headphones microphone, then start';
-  label.style.color = 'rgba(255,255,255,0.75)';
-  label.style.font = '13px Arial, sans-serif';
+  document.body.appendChild(panel);
 
-  async function refreshMicrophones() {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const microphones = devices.filter((device) => device.kind === 'audioinput');
+  phoneUiElements = { status, link, qrCanvas, hint, networkNote };
 
-      micSelect.innerHTML = '';
+  const micUrl = getMicPageUrl(network.micBase);
+  link.href = micUrl;
+  link.textContent = micUrl;
 
-      if (microphones.length === 0) {
-        const option = document.createElement('option');
-        option.textContent = 'No microphone found';
-        option.value = '';
-        micSelect.appendChild(option);
+  if (!network.isPhoneReady) {
+    updatePhoneStatus('QR con localhost: il telefono non può aprirlo', 'is-error');
+  }
+
+  try {
+    await QRCode.toCanvas(qrCanvas, micUrl, {
+      width: 168,
+      margin: 1,
+      color: {
+        dark: '#ffffff',
+        light: '#00000000',
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    hint.textContent = 'QR code non disponibile. Apri il link sotto dal telefono.';
+  }
+
+  startPhoneUploadPolling();
+}
+
+function startPhoneUploadPolling() {
+  if (stopPolling) stopPolling();
+
+  stopPolling = startUploadPolling({
+    apiUrl: resolvedApiUrl,
+    intervalMs: POLL_INTERVAL_MS,
+    onStatusChange: (state, lastId, error) => {
+      if (state === 'connected') {
+        updatePhoneStatus(
+          lastId > 0
+            ? `In ascolto… (${lastId} registrazioni ricevute)`
+            : 'In ascolto… in attesa di registrazioni',
+          'is-ready'
+        );
         return;
       }
 
-      microphones.forEach((device, index) => {
-        const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.textContent = device.label || `Microphone ${index + 1}`;
-        micSelect.appendChild(option);
-      });
+      updatePhoneStatus(`Backend non raggiungibile (${resolvedApiUrl})`, 'is-error');
+      if (error) console.warn(error);
+    },
+    onNewUpload: handleNewPhoneUpload,
+  });
+}
 
-      selectedMicDeviceId = micSelect.value;
-    } catch (error) {
-      label.textContent = 'Microphone list unavailable';
-      console.error(error);
+async function handleNewPhoneUpload(upload) {
+  updatePhoneStatus(`Nuova registrazione #${upload.id}…`, '');
+
+  try {
+    const arrayBuffer = await fetchUploadAudio(resolvedApiUrl, upload.id);
+    const frames = await extractBreathFramesFromArrayBuffer(
+      arrayBuffer,
+      microphoneSettings,
+      breathLearnDuration
+    );
+
+    if (frames.length === 0) {
+      throw new Error('Nessun frame audio estratto');
     }
-  }
 
-  micSelect.addEventListener('change', () => {
-    selectedMicDeviceId = micSelect.value;
-  });
+    simulationPaused = false;
 
-  button.addEventListener('click', async () => {
-    await startMicrophoneRecording(selectedMicDeviceId);
-    await refreshMicrophones();
+    const trail = createTrail(activeTrailNumber);
+    activeTrailNumber += 1;
 
-    const selectedOption = micSelect.options[micSelect.selectedIndex];
-    label.textContent = selectedOption
-      ? `Recording from: ${selectedOption.textContent}`
-      : 'Recording from microphone';
-  });
+    trail.mode = 'loop';
+    trail.loopFrames = frames;
+    trail.loopDuration = frames.length / 60;
+    trail.loopElapsed = 0;
 
-  stopButton.addEventListener('click', stopAllTrails);
+    activeTrails.push(trail);
+    displayTrail = trail;
+    audioStarted = true;
+    audioIsPlaying = true;
 
-  wrapper.appendChild(micSelect);
-  wrapper.appendChild(button);
-  wrapper.appendChild(stopButton);
-  wrapper.appendChild(label);
-
-  document.body.appendChild(wrapper);
-
-  refreshMicrophones();
-
-  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
-    navigator.mediaDevices.addEventListener('devicechange', refreshMicrophones);
+    updatePhoneStatus(`Scia #${upload.id} creata (${upload.originalName || 'audio'})`, 'is-ready');
+  } catch (error) {
+    console.error(error);
+    updatePhoneStatus(`Errore scia #${upload.id}: ${error.message}`, 'is-error');
   }
 }
 
@@ -995,9 +1053,10 @@ function getLoopedBreathFrame(trail, delta) {
   }
 
   if (trail.mode === 'loop' && trail.loopFrames.length > 0) {
+    const loopDuration = trail.loopDuration || breathLearnDuration;
     trail.loopElapsed += delta;
 
-    const loopProgress = (trail.loopElapsed % breathLearnDuration) / breathLearnDuration;
+    const loopProgress = (trail.loopElapsed % loopDuration) / loopDuration;
     const exactIndex = loopProgress * trail.loopFrames.length;
 
     const indexA = Math.floor(exactIndex) % trail.loopFrames.length;
