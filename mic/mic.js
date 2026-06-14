@@ -12,7 +12,6 @@ const messageEl = document.getElementById('mic-message');
 const progressEl = document.getElementById('mic-progress');
 const actionBtn = document.getElementById('mic-action');
 const canvasEl = document.getElementById('mic-canvas');
-const landingCaptionEl = document.getElementById('mic-landing-caption');
 
 const COPY = {
   idle: {
@@ -106,8 +105,6 @@ function setState(nextState) {
 
 function showUi() {
   uiEl.classList.add('is-visible');
-  uiEl.classList.remove('is-landing');
-  landingCaptionEl?.classList.remove('is-visible', 'is-exiting');
 }
 
 function setProgress(ratio) {
@@ -364,8 +361,6 @@ actionBtn.addEventListener('click', () => {
 
 async function boot() {
   setState('boot');
-  uiEl.classList.add('is-landing');
-  landingCaptionEl?.classList.add('is-visible');
 
   let rendererReady = false;
 
@@ -374,21 +369,12 @@ async function boot() {
     rendererReady = await trailRenderer.init();
 
     if (rendererReady) {
-      await trailRenderer.runLanding({
-        onTrailFadeStart: () => {
-          landingCaptionEl?.classList.remove('is-visible');
-          landingCaptionEl?.classList.add('is-exiting');
-        },
-      });
       await refreshHomePalette();
       trailRenderer.showStaticDecor(currentPositionIndex);
     }
   } catch (error) {
-    console.error('Errore avvio landing:', error);
+    console.error('Errore avvio mic:', error);
   } finally {
-    landingCaptionEl?.classList.remove('is-visible', 'is-exiting');
-    uiEl.classList.remove('is-landing');
-
     const apiOk = await ensureApiConfigured();
     if (apiOk) {
       setState('idle');

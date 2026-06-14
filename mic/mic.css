@@ -26,29 +26,6 @@ body {
   height: 100%;
 }
 
-.mic-landing-caption {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 28px;
-  z-index: 2;
-  margin: 0;
-  text-align: center;
-  font-size: 0.92rem;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.6s ease;
-}
-
-.mic-landing-caption.is-visible {
-  opacity: 0.85;
-}
-
-.mic-landing-caption.is-exiting {
-  opacity: 0;
-  transition: opacity 2.4s ease;
-}
-
 .mic-ui {
   position: relative;
   z-index: 1;
@@ -65,10 +42,6 @@ body {
 .mic-ui.is-visible {
   opacity: 1;
   pointer-events: auto;
-}
-
-.mic-ui.is-landing {
-  opacity: 0;
 }
 
 .mic-hero {

@@ -1,12 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { instancedBufferAttribute, shapeCircle } from 'three/tsl';
 import WebGPU from 'three/addons/capabilities/WebGPU.js';
-import { applyPaletteToTrail, getParticleColor, getTrailPalette } from '../src/trailPalettes.js';
-import {
-  createLandingTrail,
-  createTrailEngine,
-  getBreathFrameFromAnalyser,
-} from '../src/trailCore.js';
+import { getParticleColor, getTrailPalette } from '../src/trailPalettes.js';
+import { getBreathFrameFromAnalyser } from '../src/trailCore.js';
 import {
   DECOR_LAYOUTS,
   DECOR_PARTICLE_COUNT,
@@ -14,10 +10,6 @@ import {
 
 const CAMERA_FOV = 59;
 const CAMERA_DISTANCE = 20;
-const AUTO_ROTATE_SPEED = 2.4;
-const WORLD_UP = new THREE.Vector3(0, 1, 0);
-const LANDING_MS = 5200;
-const LANDING_TAIL_MS = 1800;
 
 const MIC_SETTINGS = {
   inputGain: 4.0,
@@ -62,19 +54,11 @@ export function createMicTrailRenderer(container) {
   let renderer = null;
   let scene = null;
   let decorGroup = null;
-  let worldGroup = null;
   let camera = null;
   let clock = null;
   let rafId = 0;
   let loopRunning = false;
-  let mode = 'idle';
-
-  let engine = null;
-  let trail = null;
-  let landingStartedAt = 0;
-  let landingFadeStarted = false;
-  let onLandingFadeStart = null;
-  let worldSpinAngle = 0;
+  let mode = 'static';
 
   let staticSprites = null;
   let staticMaterial = null;
@@ -173,43 +157,7 @@ export function createMicTrailRenderer(container) {
     writeStaticGeometry();
   }
 
-  function tickFrame(delta, { spawn = true, fade = false } = {}) {
-    worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
-    worldGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
-
-    if (fade) {
-      renderer.compute(engine.updateParticles);
-      engine.fadeSlot(trail.particleStart, 1.05);
-    } else if (spawn) {
-      engine.tickTrail(trail, delta, {
-        spawn: true,
-        audioStarted: true,
-      });
-    } else {
-      renderer.compute(engine.updateParticles);
-    }
-
-    renderer.render(scene, camera);
-  }
-
   function frameUpdate(delta) {
-    if (mode === 'landing') {
-      const elapsed = performance.now() - landingStartedAt;
-
-      if (!landingFadeStarted && elapsed >= LANDING_MS) {
-        landingFadeStarted = true;
-        onLandingFadeStart?.();
-      }
-
-      if (elapsed < LANDING_MS) {
-        tickFrame(delta, { spawn: true });
-      } else {
-        tickFrame(delta, { spawn: false, fade: true });
-      }
-
-      return;
-    }
-
     if (mode === 'recording' && liveAnalyser) {
       const frame = getBreathFrameFromAnalyser(
         liveAnalyser,
@@ -250,9 +198,7 @@ export function createMicTrailRenderer(container) {
 
     scene = new THREE.Scene();
     decorGroup = new THREE.Group();
-    worldGroup = new THREE.Group();
     scene.add(decorGroup);
-    scene.add(worldGroup);
 
     camera = new THREE.PerspectiveCamera(
       CAMERA_FOV,
@@ -273,12 +219,9 @@ export function createMicTrailRenderer(container) {
     await renderer.init();
     clock = new THREE.Clock();
 
-    engine = await createTrailEngine(renderer, worldGroup, 1, { vividColors: true });
-
     initParticleStates();
     createStaticSprites();
     writeStaticGeometry();
-    staticSprites.visible = false;
 
     window.addEventListener('resize', onResize);
     return true;
@@ -290,50 +233,7 @@ export function createMicTrailRenderer(container) {
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-
-    if (mode !== 'landing') {
-      writeStaticGeometry();
-    }
-  }
-
-  async function runLanding({ onTrailFadeStart } = {}) {
-    if (!engine) return;
-
-    onLandingFadeStart = onTrailFadeStart;
-    landingFadeStarted = false;
-
-    stopLoop();
-
-    mode = 'landing';
-    engine.clearSlot(0);
-
-    trail = createLandingTrail();
-
-    applyPaletteToTrail(trail, 0);
-    engine.applyTrailToGPU(trail);
-
-    staticSprites.visible = false;
-    landingStartedAt = performance.now();
-
-    startLoop();
-
-    await new Promise((resolve) => {
-      const wait = () => {
-        const elapsed = performance.now() - landingStartedAt;
-
-        if (elapsed >= LANDING_MS + LANDING_TAIL_MS) {
-          stopLoop();
-          engine.clearSlot(0);
-          onLandingFadeStart = null;
-          resolve();
-          return;
-        }
-
-        requestAnimationFrame(wait);
-      };
-
-      wait();
-    });
+    writeStaticGeometry();
   }
 
   function showStaticDecor(nextPositionIndex) {
@@ -377,7 +277,6 @@ export function createMicTrailRenderer(container) {
 
   return {
     init,
-    runLanding,
     showStaticDecor,
     setScreenLayout,
     setPalette,

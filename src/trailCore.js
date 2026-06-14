@@ -197,138 +197,6 @@ export function getLoopedBreathFrame(trail, delta) {
   return { level: 0, lowBand: 0, midBand: 0, highBand: 0 };
 }
 
-// Traiettoria landing: movimenti ampi con uscite/rientri fuori schermo.
-export function buildLandingPathKeyframes() {
-  return [
-    { t: 0.0, pos: new THREE.Vector3(12.83, 16.92, 0) },
-    { t: 0.2, pos: new THREE.Vector3(7.66, 12.08, -0.32) },
-    { t: 0.42, pos: new THREE.Vector3(0.69, 9.67, -0.06) },
-    { t: 0.62, pos: new THREE.Vector3(-6.22, 10.27, 0.81) },
-    { t: 0.78, pos: new THREE.Vector3(-10.73, 8.46, 1.77) },
-    { t: 0.92, pos: new THREE.Vector3(-12.04, 3.62, 2.35) },
-    { t: 1.08, pos: new THREE.Vector3(-8.42, 0.6, 1.94) },
-    { t: 1.24, pos: new THREE.Vector3(-2.02, 2.42, 0.54) },
-    { t: 1.42, pos: new THREE.Vector3(4.27, 8.46, -1.31) },
-    { t: 1.62, pos: new THREE.Vector3(10.25, 14.5, -3.62) },
-    { t: 1.82, pos: new THREE.Vector3(8.8, 20.54, -3.53) },
-    { t: 2.02, pos: new THREE.Vector3(2.29, 14.5, -1.03) },
-    { t: 2.24, pos: new THREE.Vector3(-0.25, 5.44, 0.13) },
-    { t: 2.46, pos: new THREE.Vector3(-0.97, -2.42, 0.55) },
-    { t: 2.68, pos: new THREE.Vector3(-4.49, -11.48, 2.82) },
-    { t: 2.88, pos: new THREE.Vector3(-9.42, -20.54, 6.49) },
-    { t: 3.08, pos: new THREE.Vector3(-10.25, -24.77, 7.71) },
-    { t: 3.28, pos: new THREE.Vector3(-5.93, -21.75, 4.86) },
-    { t: 3.48, pos: new THREE.Vector3(0.52, -12.69, -0.46) },
-    { t: 3.7, pos: new THREE.Vector3(4.18, -3.62, -4.1) },
-    { t: 3.92, pos: new THREE.Vector3(8.36, 2.42, -8.98) },
-    { t: 4.14, pos: new THREE.Vector3(1.98, 0.6, -2.34) },
-    { t: 4.36, pos: new THREE.Vector3(-1.02, 4.53, 1.32) },
-    { t: 4.58, pos: new THREE.Vector3(5.76, 9.67, -8.22) },
-    { t: 4.78, pos: new THREE.Vector3(-0.15, 3.62, 0.23) },
-    { t: 5.0, pos: new THREE.Vector3(-0.35, 3.62, 0.6) },
-    { t: 5.15, pos: new THREE.Vector3(-0.33, 3.62, 0.61) },
-  ];
-}
-
-export function buildLandingPathPoints() {
-  return buildLandingPathKeyframes().map((keyframe) => keyframe.pos.clone());
-}
-
-function catmullRomPoint(p0, p1, p2, p3, t) {
-  const t2 = t * t;
-  const t3 = t2 * t;
-
-  return new THREE.Vector3(
-    0.5 * (
-      (2 * p1.x) +
-      (-p0.x + p2.x) * t +
-      (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
-      (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
-    ),
-    0.5 * (
-      (2 * p1.y) +
-      (-p0.y + p2.y) * t +
-      (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
-      (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
-    ),
-    0.5 * (
-      (2 * p1.z) +
-      (-p0.z + p2.z) * t +
-      (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 +
-      (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3
-    )
-  );
-}
-
-function samplePathPoints(points, t) {
-  const segments = points.length - 1;
-  const clamped = THREE.MathUtils.clamp(t, 0, 1);
-  const scaled = clamped * segments;
-  const index = Math.min(Math.floor(scaled), segments - 1);
-  const localT = scaled - index;
-  return points[index].clone().lerp(points[index + 1], localT);
-}
-
-function sampleLandingPathKeyframes(keyframes, elapsedSec) {
-  if (!keyframes?.length) {
-    return new THREE.Vector3();
-  }
-
-  if (keyframes.length === 1 || elapsedSec <= keyframes[0].t) {
-    return keyframes[0].pos.clone();
-  }
-
-  const lastKeyframe = keyframes[keyframes.length - 1];
-  if (elapsedSec >= lastKeyframe.t) {
-    return lastKeyframe.pos.clone();
-  }
-
-  let segmentIndex = 0;
-  while (
-    segmentIndex < keyframes.length - 2 &&
-    keyframes[segmentIndex + 1].t < elapsedSec
-  ) {
-    segmentIndex += 1;
-  }
-
-  const start = keyframes[segmentIndex];
-  const end = keyframes[segmentIndex + 1];
-  const localT = THREE.MathUtils.clamp(
-    (elapsedSec - start.t) / Math.max(0.0001, end.t - start.t),
-    0,
-    1
-  );
-
-  const p0 = keyframes[Math.max(0, segmentIndex - 1)].pos;
-  const p1 = start.pos;
-  const p2 = end.pos;
-  const p3 = keyframes[Math.min(keyframes.length - 1, segmentIndex + 2)].pos;
-
-  return catmullRomPoint(p0, p1, p2, p3, localT);
-}
-
-function landingSectionProfile(progress) {
-  const pulseA = Math.sin(progress * Math.PI * 2 * 3.6 + 0.2);
-  const pulseB = Math.sin(progress * Math.PI * 2 * 5.4 + 1.1);
-  const envelope = THREE.MathUtils.clamp(0.5 + pulseA * 0.34 + pulseB * 0.2, 0, 1);
-  const swell = Math.pow(envelope, 1.25);
-  const thin = Math.pow(1 - envelope, 2.5);
-
-  return {
-    level: 0.08 + swell * 0.86 + thin * 0.04,
-    lowBand: 0.14 + swell * 0.52 + thin * 0.04,
-    midBand: 0.18 + swell * 0.58 + thin * 0.05,
-    highBand: 0.12 + swell * 0.68 + thin * 0.06,
-    sectionScale: 0.2 + swell * 2.35 + thin * 0.05,
-    particleSize: 0.18 + swell * 0.48 + thin * 0.03,
-    spawnMul: 0.28 + swell * 1.05,
-  };
-}
-
-function landingBreathFrame(t) {
-  return landingSectionProfile(t);
-}
-
 export async function createTrailEngine(renderer, worldGroup, slotCount = 1, options = {}) {
   const slotParticles = options.particlesPerTrail ?? particlesPerTrail;
   const vividColors = options.vividColors ?? false;
@@ -692,89 +560,41 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     turbAmplitude.value = THREE.MathUtils.lerp(
       turbAmplitude.value,
       0.25 + trail.smoothedLevel * 2.4 + highBand * 1.2,
-      options.fixedPhaseT != null ? 1 : 0.08
+      0.08
     );
 
-    if (options.fixedPhaseT != null) {
-      const spawnMul = breathFrame.spawnMul ?? 1;
-      nbToSpawn.value = Math.round(5 + trail.smoothedLevel * 78 * spawnMul);
-      if (Number.isFinite(breathFrame.sectionScale)) {
-        cymaticScale.value = breathFrame.sectionScale;
-      }
-      if (Number.isFinite(breathFrame.particleSize)) {
-        particleSize.value = breathFrame.particleSize;
-      }
-    } else {
-      nbToSpawn.value = THREE.MathUtils.lerp(
-        nbToSpawn.value,
-        8 + trail.smoothedLevel * 70,
-        0.08
-      );
-    }
+    nbToSpawn.value = THREE.MathUtils.lerp(
+      nbToSpawn.value,
+      8 + trail.smoothedLevel * 70,
+      0.08
+    );
 
     cymaticLevel.value = THREE.MathUtils.lerp(cymaticLevel.value, trail.smoothedLevel, 0.16);
     cymaticLow.value = THREE.MathUtils.lerp(cymaticLow.value, lowBand, 0.14);
     cymaticMid.value = THREE.MathUtils.lerp(cymaticMid.value, midBand, 0.14);
     cymaticHigh.value = THREE.MathUtils.lerp(cymaticHigh.value, highBand, 0.14);
 
-    if (options.fixedPhaseT != null) {
-      cymaticPhase.value = options.fixedPhaseT * 14.0;
-    } else {
-      cymaticPhase.value += delta * (1.2 + trail.smoothedLevel * 5.0);
-    }
+    cymaticPhase.value += delta * (1.2 + trail.smoothedLevel * 5.0);
 
-    if (!options.lockBrightness) {
-      const brightnessContrast = THREE.MathUtils.clamp(
-        highBand * 2.2 - lowBand * 1.4 + midBand * 0.25,
-        -1.2,
-        1.2
-      );
-      const audioBrightness = THREE.MathUtils.clamp(
-        0.95 + brightnessContrast * 1.6 + trail.smoothedLevel * 0.55,
-        0.08,
-        4.0
-      );
-      colorBrightness.value = THREE.MathUtils.lerp(
-        colorBrightness.value,
-        audioBrightness,
-        0.28
-      );
-    }
+    const brightnessContrast = THREE.MathUtils.clamp(
+      highBand * 2.2 - lowBand * 1.4 + midBand * 0.25,
+      -1.2,
+      1.2
+    );
+    const audioBrightness = THREE.MathUtils.clamp(
+      0.95 + brightnessContrast * 1.6 + trail.smoothedLevel * 0.55,
+      0.08,
+      4.0
+    );
+    colorBrightness.value = THREE.MathUtils.lerp(
+      colorBrightness.value,
+      audioBrightness,
+      0.28
+    );
   }
 
   function updateAudioDrivenPosition(trail, delta, audioStarted = true) {
     if (!audioStarted) return;
-
-    if (trail.mode === 'path' && (trail.pathKeyframes?.length || trail.pathPoints?.length > 1)) {
-      trail.pathElapsed = (trail.pathElapsed ?? 0) + delta;
-      const duration = trail.pathDuration ?? 5.2;
-      const elapsed = THREE.MathUtils.clamp(trail.pathElapsed, 0, duration);
-      const progress = elapsed / duration;
-      const samplePath = (timeSec) => (
-        trail.pathKeyframes?.length
-          ? sampleLandingPathKeyframes(trail.pathKeyframes, timeSec)
-          : samplePathPoints(
-            trail.pathPoints,
-            THREE.MathUtils.clamp(timeSec / duration, 0, 1)
-          )
-      );
-      const nextPosition = samplePath(elapsed);
-      const aheadPosition = samplePath(elapsed + 0.08);
-
-      trail.position.copy(nextPosition);
-      trail.audioDrivenPosition.copy(nextPosition);
-
-      if (aheadPosition.distanceToSquared(nextPosition) > 0.000001) {
-        trail.direction.copy(aheadPosition.sub(nextPosition).normalize());
-        trail.targetDirection.copy(trail.direction);
-      }
-
-      applyBreathAndUniforms(trail, delta, landingBreathFrame(progress), {
-        fixedPhaseT: progress,
-        lockBrightness: true,
-      });
-      return;
-    }
 
     const breathFrame = getLoopedBreathFrame(trail, delta);
     const level = breathFrame.level;
@@ -889,11 +709,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 
     trail.previousSpawnPosition.copy(trail.spawnPosition);
     updateAudioDrivenPosition(trail, delta, audioStarted);
-    if (trail.mode === 'path') {
-      trail.spawnPosition.copy(trail.audioDrivenPosition);
-    } else {
-      trail.spawnPosition.lerp(trail.audioDrivenPosition, trajectoryParams.smoothness);
-    }
+    trail.spawnPosition.lerp(trail.audioDrivenPosition, trajectoryParams.smoothness);
 
     if (spawn) {
       applyTrailToGPU(trail);
@@ -931,35 +747,6 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     },
     runtime,
   };
-}
-
-export function createLandingTrail() {
-  const pathKeyframes = buildLandingPathKeyframes();
-  const pathPoints = pathKeyframes.map((keyframe) => keyframe.pos);
-  const startPosition = sampleLandingPathKeyframes(pathKeyframes, 0).clone();
-
-  const trail = createTrail(0, 0, 0);
-  trail.mode = 'path';
-  trail.pathKeyframes = pathKeyframes;
-  trail.pathPoints = pathPoints;
-  trail.pathDuration = 5.2;
-  trail.pathElapsed = 0;
-
-  trail.homePosition.set(0, 0, 0);
-  trail.position.copy(startPosition);
-  trail.spawnPosition.copy(startPosition);
-  trail.previousSpawnPosition.copy(startPosition);
-  trail.audioDrivenPosition.copy(startPosition);
-
-  const aheadPosition = sampleLandingPathKeyframes(pathKeyframes, 0.05);
-  const tangent = aheadPosition.sub(startPosition);
-  if (tangent.lengthSq() > 0.000001) {
-    tangent.normalize();
-    trail.direction.copy(tangent);
-    trail.targetDirection.copy(tangent);
-  }
-
-  return trail;
 }
 
 export function createAmbientTrail() {
