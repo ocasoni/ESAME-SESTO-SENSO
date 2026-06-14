@@ -181,7 +181,19 @@ recordBtn.addEventListener('click', startRecording);
 stopBtn.addEventListener('click', stopRecording);
 sendBtn.addEventListener('click', sendRecording);
 
-runMicSplash().then(() => {
+function showMicPage() {
+  document.getElementById('mic-splash')?.remove();
   pageEl.classList.add('is-visible');
   ensureApiConfigured();
-});
+}
+
+const splashSafetyTimer = window.setTimeout(showMicPage, 10000);
+
+runMicSplash()
+  .catch((error) => {
+    console.warn('Splash interrotta:', error);
+  })
+  .finally(() => {
+    window.clearTimeout(splashSafetyTimer);
+    showMicPage();
+  });

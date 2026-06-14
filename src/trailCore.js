@@ -257,8 +257,9 @@ export function getLoopedBreathFrame(trail, delta) {
   return { level: 0, lowBand: 0, midBand: 0, highBand: 0 };
 }
 
-export async function createTrailEngine(renderer, worldGroup, slotCount = 1) {
-  const nbParticles = particlesPerTrail * slotCount;
+export async function createTrailEngine(renderer, worldGroup, slotCount = 1, options = {}) {
+  const slotParticles = options.particlesPerTrail ?? particlesPerTrail;
+  const nbParticles = slotParticles * slotCount;
 
   const currentTrailParticleStart = uniform(0);
   const clearTrailParticleStart = uniform(0);
@@ -346,7 +347,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1) {
     particlePositions.element(particleIndex).w.assign(-1.0);
     particleProperties.element(particleIndex).w.assign(0.0);
     particleProperties.element(particleIndex).z.assign(1.0);
-  })().compute(particlesPerTrail);
+  })().compute(slotParticles);
 
   const fadeTrailSlot = Fn(() => {
     const particleIndex = fadeTrailParticleStart.add(instanceIndex).toInt();
@@ -365,7 +366,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1) {
         position.assign(vec3(10000.0));
       });
     });
-  })().compute(particlesPerTrail);
+  })().compute(slotParticles);
 
   const updateParticles = Fn(() => {
     const position = particlePositions.element(instanceIndex).xyz;
@@ -412,7 +413,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1) {
 
   const spawnParticles = Fn(() => {
     const particleIndex = currentTrailParticleStart
-      .add(spawnIndex.add(instanceIndex).mod(particlesPerTrail).toInt())
+      .add(spawnIndex.add(instanceIndex).mod(slotParticles).toInt())
       .toInt();
     const position = particlePositions.element(particleIndex).xyz;
     const life = particlePositions.element(particleIndex).w;
@@ -629,7 +630,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1) {
     if (spawn) {
       applyTrailToGPU(trail);
       renderer.compute(spawnParticles);
-      trail.spawnIndex = (trail.spawnIndex + nbToSpawn.value) % particlesPerTrail;
+      trail.spawnIndex = (trail.spawnIndex + nbToSpawn.value) % slotParticles;
     }
   }
 
@@ -653,6 +654,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1) {
     applyTrailToGPU,
     updateAudioDrivenPosition,
     tickTrail,
+    particlesPerSlot: slotParticles,
     uniforms: {
       nbToSpawn,
       colorBrightness,
@@ -663,18 +665,9 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1) {
 
 export function createSplashTrail() {
   const trail = createTrail(0, 0, 0);
-  const start = new THREE.Vector3(-3.8, 4.2, -0.6);
-
-  trail.mode = 'auto';
+  trail.mode = 'loop';
+  trail.loopDuration = 4;
   trail.loopElapsed = 0;
-  trail.loopFrames = [];
-  trail.homePosition.copy(start);
-  trail.position.copy(start);
-  trail.spawnPosition.copy(start);
-  trail.previousSpawnPosition.copy(start);
-  trail.audioDrivenPosition.copy(start);
-  trail.direction.set(0.62, -0.58, 0.14).normalize();
-  trail.wanderPhase = 1.35;
-
+  trail.loopFrames = buildSplashLoopFrames(4, 60);
   return trail;
 }
