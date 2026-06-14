@@ -6,11 +6,19 @@ import {
   createTrailEngine,
   getBreathFrameFromAnalyser,
 } from '../src/trailCore.js';
+import {
+  DECOR_LAYOUTS,
+  DECOR_PARTICLE_COUNT,
+  layoutForMicState,
+} from './mic-decor-layouts.js';
 
 const CAMERA_FOV = 59;
 const CAMERA_DISTANCE = 20;
-const LANDING_MS = 5200;
-const LANDING_TAIL_MS = 1800;
+const AUTO_ROTATE_SPEED = 2;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const LANDING_MS = 4000;
+const LANDING_TAIL_MS = 2400;
+const TRANSITION_STEP_MS = 55;
 
 const MIC_SETTINGS = {
   inputGain: 4.0,
@@ -20,38 +28,7 @@ const MIC_SETTINGS = {
   highSensitivity: 7.0,
 };
 
-function addCluster(out, nx, ny, count, spread) {
-  for (let i = 0; i < count; i += 1) {
-    const angle = (i / count) * Math.PI * 2;
-    const radius = ((i * 0.618) % 1) * spread;
-    out.push({
-      nx: nx + Math.cos(angle) * radius,
-      ny: ny + Math.sin(angle) * radius,
-      seed: out.length + i * 17,
-    });
-  }
-}
-
-function buildDecorLayout() {
-  const points = [];
-
-  addCluster(points, 0.84, 0.1, 28, 0.06);
-  addCluster(points, 0.76, 0.16, 18, 0.04);
-  addCluster(points, 0.92, 0.36, 24, 0.05);
-  addCluster(points, 0.86, 0.46, 16, 0.035);
-
-  for (let i = 0; i <= 72; i += 1) {
-    const t = i / 72;
-    const nx = THREE.MathUtils.lerp(0.04, 0.58, t) + Math.sin(t * Math.PI * 5.5) * 0.028;
-    const ny = THREE.MathUtils.lerp(0.96, 0.64, t) + Math.cos(t * Math.PI * 4.2) * 0.022;
-    addCluster(points, nx, ny, 2, 0.012);
-  }
-
-  addCluster(points, 0.12, 0.88, 14, 0.04);
-  addCluster(points, 0.28, 0.78, 12, 0.03);
-
-  return points;
-}
+const COLOR_GAIN = 2.45;
 
 function screenToWorld(nx, ny, aspect) {
   const height = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2)) * CAMERA_DISTANCE;
@@ -61,10 +38,20 @@ function screenToWorld(nx, ny, aspect) {
   return new THREE.Vector3(x, y, 0);
 }
 
+function boostColor(color) {
+  const max = Math.max(color.x, color.y, color.z, 0.001);
+  const floor = 0.22;
+  const scaled = color.clone().multiplyScalar(COLOR_GAIN);
+  if (max * COLOR_GAIN < floor) {
+    scaled.multiplyScalar(floor / (max * COLOR_GAIN));
+  }
+  return scaled;
+}
+
 export function createMicTrailRenderer(container) {
   let renderer = null;
   let scene = null;
-  let worldGroup = null;
+  let decorGroup = null;
   let landingGroup = null;
   let camera = null;
   let clock = null;
@@ -75,57 +62,82 @@ export function createMicTrailRenderer(container) {
   let landingEngine = null;
   let landingTrail = null;
   let landingStartedAt = 0;
+  let worldSpinAngle = 0;
 
   let staticPoints = null;
   let staticMaterial = null;
-  let staticBaseSizes = null;
-  let staticBaseColors = null;
-  let decorLayout = buildDecorLayout();
   let positionIndex = 0;
   let brightness = 1;
   let liveAnalyser = null;
   let liveFrequencyData = null;
   let liveWaveformData = null;
 
-  function rebuildStaticPoints() {
-    if (!worldGroup) return;
+  let currentLayout = 'idle';
+  let particleStates = [];
+  let transitionQueue = [];
+  let transitionTimer = 0;
+  let baseColors = null;
 
-    if (staticPoints) {
-      worldGroup.remove(staticPoints);
-      staticPoints.geometry.dispose();
-      staticMaterial.dispose();
-    }
+  function initParticleStates(layoutName) {
+    const layout = DECOR_LAYOUTS[layoutName];
+    particleStates = layout.map((point, index) => ({
+      nx: point.nx,
+      ny: point.ny,
+      size: point.size,
+      seed: point.seed,
+      alpha: 1,
+      index,
+    }));
+  }
+
+  function paletteColor(seed) {
+    const palette = getTrailPalette(positionIndex);
+    return boostColor(getParticleColor(palette, seed));
+  }
+
+  function writeStaticGeometry() {
+    if (!staticPoints) return;
 
     const aspect = window.innerWidth / window.innerHeight;
-    const palette = getTrailPalette(positionIndex);
-    const positions = [];
-    const colors = [];
-    const sizes = [];
+    const posAttr = staticPoints.geometry.getAttribute('position');
+    const colorAttr = staticPoints.geometry.getAttribute('color');
+    baseColors = new Float32Array(DECOR_PARTICLE_COUNT * 3);
 
-    decorLayout.forEach((point) => {
-      const world = screenToWorld(
-        THREE.MathUtils.clamp(point.nx, 0.02, 0.98),
-        THREE.MathUtils.clamp(point.ny, 0.02, 0.98),
-        aspect
+    particleStates.forEach((particle, i) => {
+      const world = screenToWorld(particle.nx, particle.ny, aspect);
+      const color = paletteColor(particle.seed);
+      const alpha = particle.alpha;
+
+      posAttr.setXYZ(i, world.x, world.y, world.z);
+      colorAttr.setXYZ(
+        i,
+        color.x * alpha * brightness,
+        color.y * alpha * brightness,
+        color.z * alpha * brightness
       );
-      const color = getParticleColor(palette, point.seed);
-      const size = 0.11 + (point.seed % 1) * 0.08;
 
-      positions.push(world.x, world.y, world.z);
-      colors.push(color.x * 1.35, color.y * 1.35, color.z * 1.35);
-      sizes.push(size);
+      baseColors[i * 3] = color.x;
+      baseColors[i * 3 + 1] = color.y;
+      baseColors[i * 3 + 2] = color.z;
     });
 
+    posAttr.needsUpdate = true;
+    colorAttr.needsUpdate = true;
+  }
+
+  function createStaticPoints() {
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+    const positions = new Float32Array(DECOR_PARTICLE_COUNT * 3);
+    const colors = new Float32Array(DECOR_PARTICLE_COUNT * 3);
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     staticMaterial = new THREE.PointsMaterial({
-      size: 0.18,
+      size: 0.24,
       vertexColors: true,
       transparent: true,
-      opacity: 0.92,
+      opacity: 1,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       sizeAttenuation: true,
@@ -133,25 +145,63 @@ export function createMicTrailRenderer(container) {
 
     staticPoints = new THREE.Points(geometry, staticMaterial);
     staticPoints.frustumCulled = false;
-    staticBaseSizes = sizes.slice();
-    staticBaseColors = colors.slice();
-    worldGroup.add(staticPoints);
+    decorGroup.add(staticPoints);
   }
 
   function applyStaticBrightness(level) {
-    if (!staticMaterial || !staticPoints) return;
+    brightness = THREE.MathUtils.clamp(level, 0.45, 1.55);
+    staticMaterial.size = 0.2 + brightness * 0.08;
+    writeStaticGeometry();
+  }
 
-    brightness = THREE.MathUtils.clamp(level, 0.35, 1.45);
-    staticMaterial.opacity = 0.55 + brightness * 0.45;
-    staticMaterial.size = 0.14 + brightness * 0.08;
+  function queueLayoutTransition(nextLayout) {
+    if (nextLayout === currentLayout && transitionQueue.length === 0) return;
 
-    const colorAttr = staticPoints.geometry.getAttribute('color');
-    for (let i = 0; i < staticBaseColors.length; i += 3) {
-      colorAttr.array[i] = staticBaseColors[i] * brightness;
-      colorAttr.array[i + 1] = staticBaseColors[i + 1] * brightness;
-      colorAttr.array[i + 2] = staticBaseColors[i + 2] * brightness;
+    const targets = DECOR_LAYOUTS[nextLayout];
+    transitionQueue = [];
+
+    for (let i = 0; i < DECOR_PARTICLE_COUNT; i += 1) {
+      transitionQueue.push({
+        index: i,
+        target: targets[i],
+        phase: 'out',
+      });
     }
-    colorAttr.needsUpdate = true;
+
+    for (let i = transitionQueue.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [transitionQueue[i], transitionQueue[j]] = [transitionQueue[j], transitionQueue[i]];
+    }
+
+    currentLayout = nextLayout;
+    transitionTimer = 0;
+  }
+
+  function stepLayoutTransition(delta) {
+    if (!transitionQueue.length) return;
+
+    transitionTimer += delta * 1000;
+
+    while (transitionQueue.length && transitionTimer >= TRANSITION_STEP_MS) {
+      transitionTimer -= TRANSITION_STEP_MS;
+      const step = transitionQueue[0];
+      const particle = particleStates[step.index];
+
+      if (step.phase === 'out') {
+        particle.alpha = 0;
+        writeStaticGeometry();
+        step.phase = 'in';
+        continue;
+      }
+
+      transitionQueue.shift();
+      particle.nx = step.target.nx;
+      particle.ny = step.target.ny;
+      particle.size = step.target.size;
+      particle.seed = step.target.seed;
+      particle.alpha = 1;
+      writeStaticGeometry();
+    }
   }
 
   function renderFrame() {
@@ -161,6 +211,9 @@ export function createMicTrailRenderer(container) {
   function frameUpdate(delta) {
     if (mode === 'landing') {
       const elapsed = performance.now() - landingStartedAt;
+
+      worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
+      landingGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
 
       if (elapsed < LANDING_MS) {
         landingEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
@@ -173,6 +226,8 @@ export function createMicTrailRenderer(container) {
       return;
     }
 
+    stepLayoutTransition(delta);
+
     if (mode === 'recording' && liveAnalyser) {
       const frame = getBreathFrameFromAnalyser(
         liveAnalyser,
@@ -180,7 +235,7 @@ export function createMicTrailRenderer(container) {
         liveWaveformData,
         MIC_SETTINGS
       );
-      applyStaticBrightness(0.55 + frame.level * 0.9);
+      applyStaticBrightness(0.62 + frame.level * 0.95);
     }
 
     renderFrame();
@@ -212,9 +267,9 @@ export function createMicTrailRenderer(container) {
     }
 
     scene = new THREE.Scene();
-    worldGroup = new THREE.Group();
+    decorGroup = new THREE.Group();
     landingGroup = new THREE.Group();
-    scene.add(worldGroup);
+    scene.add(decorGroup);
     scene.add(landingGroup);
 
     camera = new THREE.PerspectiveCamera(
@@ -235,7 +290,10 @@ export function createMicTrailRenderer(container) {
 
     await renderer.init();
     clock = new THREE.Clock();
-    rebuildStaticPoints();
+
+    initParticleStates('idle');
+    createStaticPoints();
+    writeStaticGeometry();
     staticPoints.visible = false;
 
     window.addEventListener('resize', onResize);
@@ -249,8 +307,7 @@ export function createMicTrailRenderer(container) {
     renderer.setSize(window.innerWidth, window.innerHeight);
 
     if (mode !== 'landing') {
-      rebuildStaticPoints();
-      applyStaticBrightness(brightness);
+      writeStaticGeometry();
     }
   }
 
@@ -258,11 +315,13 @@ export function createMicTrailRenderer(container) {
     landingEngine = await createTrailEngine(renderer, landingGroup, 1);
     landingTrail = createLandingTrail();
     applyPaletteToTrail(landingTrail, 0);
+    landingEngine.uniforms.colorBrightness.value = 1.75;
     landingEngine.applyTrailToGPU(landingTrail);
 
     staticPoints.visible = false;
     mode = 'landing';
     landingStartedAt = performance.now();
+    worldSpinAngle = 0;
     startLoop();
 
     await new Promise((resolve) => {
@@ -274,6 +333,7 @@ export function createMicTrailRenderer(container) {
           landingGroup.clear();
           landingEngine = null;
           landingTrail = null;
+          landingGroup.quaternion.identity();
           resolve();
           return;
         }
@@ -283,19 +343,23 @@ export function createMicTrailRenderer(container) {
     });
   }
 
-  function showStaticDecor(nextPositionIndex) {
+  function showStaticDecor(nextPositionIndex, layoutName = 'idle') {
     positionIndex = nextPositionIndex;
     mode = 'static';
-    rebuildStaticPoints();
     staticPoints.visible = true;
+    queueLayoutTransition(layoutName);
     applyStaticBrightness(1);
-    startLoop();
+    if (!loopRunning) startLoop();
+  }
+
+  function setScreenLayout(micState) {
+    const layoutName = layoutForMicState(micState);
+    queueLayoutTransition(layoutName);
   }
 
   function setPalette(nextPositionIndex) {
     positionIndex = nextPositionIndex;
-    rebuildStaticPoints();
-    applyStaticBrightness(brightness);
+    writeStaticGeometry();
   }
 
   function startRecording(analyser, frequencyData, waveformData) {
@@ -304,6 +368,7 @@ export function createMicTrailRenderer(container) {
     liveWaveformData = waveformData;
     mode = 'recording';
     staticPoints.visible = true;
+    setScreenLayout('recording');
     if (!loopRunning) startLoop();
   }
 
@@ -324,6 +389,7 @@ export function createMicTrailRenderer(container) {
     init,
     runLanding,
     showStaticDecor,
+    setScreenLayout,
     setPalette,
     startRecording,
     stopRecordingVisual,

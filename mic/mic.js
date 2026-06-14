@@ -73,6 +73,10 @@ function setState(nextState) {
   actionBtn.textContent = copy.action;
   actionBtn.disabled = nextState === 'boot' || nextState === 'waiting' || nextState === 'generating';
 
+  if (nextState !== 'boot' && nextState !== 'recording') {
+    trailRenderer?.setScreenLayout(nextState);
+  }
+
   if (nextState === 'waiting' || nextState === 'generating') {
     progressEl.style.width = '100%';
   } else if (nextState !== 'recording') {
@@ -367,6 +371,7 @@ async function boot() {
   const apiOk = await ensureApiConfigured();
   if (apiOk) {
     setState('idle');
+    trailRenderer?.setScreenLayout('idle');
   }
 
   showUi();
