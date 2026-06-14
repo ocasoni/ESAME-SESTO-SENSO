@@ -28,11 +28,10 @@ body {
 
 .mic-landing-text {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  bottom: 10vh;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   margin: 0;
   padding: 0 28px;
   text-align: center;
@@ -47,9 +46,18 @@ body {
   animation: mic-landing-blink 2.2s ease-in-out infinite;
 }
 
+.mic-landing-text.is-visible.is-fading {
+  animation: mic-landing-fadeout 1.8s ease forwards;
+}
+
 @keyframes mic-landing-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
+}
+
+@keyframes mic-landing-fadeout {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .mic-ui {

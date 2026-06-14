@@ -6,6 +6,9 @@ const UPLOAD_SECRET = params.get('secret') || '';
 const RECORD_SECONDS = 20;
 const SENT_MESSAGE_DELAY_MS = 23000;
 
+const LANDING_MS = 5200;
+const LANDING_TAIL_MS = 1800;
+
 const uiEl = document.getElementById('mic-ui');
 const messageEl = document.getElementById('mic-message');
 const progressEl = document.getElementById('mic-progress');
@@ -24,7 +27,7 @@ const COPY = {
     action: 'respira…',
   },
   uploading: {
-    message: 'Attendi che l tuo respiro prenda forma…',
+    message: 'Attendi che il tuo respiro prenda forma…',
     action: 'inviato',
   },
   sent: {
@@ -73,12 +76,22 @@ function setState(nextState) {
   }
 }
 
+let landingFadeTimer = null;
+
 function showLandingText() {
+  clearTimeout(landingFadeTimer);
+  landingTextEl?.classList.remove('is-fading');
   landingTextEl?.classList.add('is-visible');
+
+  landingFadeTimer = window.setTimeout(() => {
+    landingTextEl?.classList.add('is-fading');
+  }, LANDING_MS);
 }
 
 function hideLandingText() {
-  landingTextEl?.classList.remove('is-visible');
+  clearTimeout(landingFadeTimer);
+  landingFadeTimer = null;
+  landingTextEl?.classList.remove('is-visible', 'is-fading');
 }
 
 function showUi() {
