@@ -37,7 +37,7 @@ body {
   padding: 0 24px calc(36px + env(safe-area-inset-bottom, 0px));
   pointer-events: none;
   opacity: 1;
-  transition: opacity 1.35s ease;
+  transition: opacity 2.8s ease;
 }
 
 .mic-landing.is-hidden {
@@ -57,7 +57,7 @@ body {
 
 .mic-landing.is-dissolving .mic-landing-copy {
   animation: none;
-  transition: opacity 1.35s ease;
+  transition: opacity 2.8s ease;
   opacity: 0;
 }
 

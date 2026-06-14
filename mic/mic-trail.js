@@ -1,21 +1,11 @@
 import * as THREE from 'three/webgpu';
-import { instancedBufferAttribute, shapeCircle } from 'three/tsl';
 import WebGPU from 'three/addons/capabilities/WebGPU.js';
-import { getParticleColor, getTrailPalette } from '../src/trailPalettes.js';
-import { getBreathFrameFromAnalyser } from '../src/trailCore.js';
 import {
-  DECOR_LAYOUTS,
-  DECOR_PARTICLE_COUNT,
-} from './mic-decor-layouts.js';
-import {
-  LANDING_PATH,
-  LANDING_PARTICLE_COUNT,
-  LANDING_TRAIL_SPAN,
-  LANDING_MOVE_DURATION,
-  LANDING_DISSOLVE_DURATION,
-  buildLandingParticles,
-  sampleLandingPath,
-} from './mic-landing-path.js';
+  createTrail,
+  createTrailEngine,
+  getBreathFrameFromAnalyser,
+} from '../src/trailCore.js';
+import { applyPaletteToTrail } from '../src/trailPalettes.js';
 
 const CAMERA_FOV = 59;
 const CAMERA_DISTANCE = 20;
@@ -28,236 +18,89 @@ const MIC_SETTINGS = {
   highSensitivity: 7.0,
 };
 
-const COLOR_BRIGHTNESS = 1.25;
-const STATIC_COLOR_SCALE = 1.1;
-const DOT_SIZE_MIN_PX = 14;
-const DOT_SIZE_MAX_PX = 36;
+const LANDING_MOVE_DURATION = 5.4;
+const TRAIL_FADE_DURATION = 2.8;
 
-const SPRITE_COUNT = Math.max(DECOR_PARTICLE_COUNT, LANDING_PARTICLE_COUNT);
-
-function rnd(seed) {
-  const x = Math.sin(seed * 127.1 + seed * 311.7) * 43758.5453;
-  return x - Math.floor(x);
-}
-
-function particlePixelSize(seed, nx, boost = 1) {
-  const mix = rnd(seed * 3.17);
-  let size = THREE.MathUtils.lerp(DOT_SIZE_MIN_PX, DOT_SIZE_MAX_PX, mix) * boost;
-  const edgeDistance = Math.min(nx, 1 - nx);
-  if (edgeDistance < 0.14) {
-    size = Math.max(size, THREE.MathUtils.lerp(24, DOT_SIZE_MAX_PX, 1 - edgeDistance / 0.14) * boost);
-  }
-  return size;
-}
-
-function screenToWorld(nx, ny, aspect) {
-  const height = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2)) * CAMERA_DISTANCE;
-  const width = height * aspect;
-  const x = (nx - 0.5) * 2 * width * 0.94;
-  const y = (0.5 - ny) * 2 * height * 0.94;
-  return new THREE.Vector3(x, y, 0);
-}
-
-function clampChannel(value) {
-  return Math.min(1, Math.max(0, value));
-}
+const LANDING_DRIFT_FROM = new THREE.Vector3(-3.8, -2.6, 0);
+const LANDING_DRIFT_TO = new THREE.Vector3(4.6, 3.4, 0);
 
 export function createMicTrailRenderer(container) {
   let renderer = null;
   let scene = null;
-  let decorGroup = null;
+  let worldGroup = null;
   let camera = null;
   let clock = null;
   let rafId = 0;
   let loopRunning = false;
-  let mode = 'static';
+  let mode = 'idle';
 
-  let staticSprites = null;
-  let staticMaterial = null;
-  let staticPositionAttr = null;
-  let staticColorAttr = null;
-  let staticSizeAttr = null;
-  let staticAlphaAttr = null;
+  let trailEngine = null;
   let positionIndex = 0;
-  let brightness = 1;
+  let landingTrail = null;
+  let recordingTrail = null;
+  let landingElapsed = 0;
+  let landingDissolveElapsed = 0;
+  let landingDissolving = false;
+  let landingCompleteCallback = null;
+
   let liveAnalyser = null;
   let liveFrequencyData = null;
   let liveWaveformData = null;
 
-  let particleStates = [];
-  let landingParticles = buildLandingParticles(LANDING_PATH, LANDING_PARTICLE_COUNT, LANDING_TRAIL_SPAN);
-  let landingElapsed = 0;
-  let landingDissolve = 0;
-  let landingCompleteCallback = null;
-  let activeSpriteCount = DECOR_PARTICLE_COUNT;
-
-  function paletteColor(seed) {
-    const palette = getTrailPalette(positionIndex);
-    return getParticleColor(palette, seed).multiplyScalar(STATIC_COLOR_SCALE * COLOR_BRIGHTNESS);
+  function createFirstTrail(nextPositionIndex) {
+    const trail = createTrail(0, 0, nextPositionIndex);
+    trail.mode = 'auto';
+    trail.loopElapsed = 0;
+    return trail;
   }
 
-  function initParticleStates() {
-    const layout = DECOR_LAYOUTS.home;
-    particleStates = layout.map((point, index) => ({
-      nx: point.nx,
-      ny: point.ny,
-      seed: point.seed,
-      index,
-    }));
+  function updateLandingDrift() {
+    const t = Math.min(1, landingElapsed / LANDING_MOVE_DURATION);
+    worldGroup.position.lerpVectors(LANDING_DRIFT_FROM, LANDING_DRIFT_TO, t);
   }
 
-  function writeStaticGeometry() {
-    if (!staticSprites) return;
-
-    const aspect = window.innerWidth / window.innerHeight;
-
-    particleStates.forEach((particle, i) => {
-      const world = screenToWorld(particle.nx, particle.ny, aspect);
-      const color = paletteColor(particle.seed);
-      const pixelSize = particlePixelSize(particle.seed, particle.nx);
-
-      staticPositionAttr.setXYZ(i, world.x, world.y, world.z);
-      staticSizeAttr.setX(i, pixelSize);
-      staticAlphaAttr.setX(i, 1);
-      staticColorAttr.setXYZ(
-        i,
-        clampChannel(color.x * brightness),
-        clampChannel(color.y * brightness),
-        clampChannel(color.z * brightness)
-      );
-    });
-
-    staticPositionAttr.needsUpdate = true;
-    staticColorAttr.needsUpdate = true;
-    staticSizeAttr.needsUpdate = true;
-    staticAlphaAttr.needsUpdate = true;
-  }
-
-  function writeLandingGeometry(globalAlpha = 1) {
-    if (!staticSprites) return;
-
-    const aspect = window.innerWidth / window.innerHeight;
-    const moveT = Math.min(1, landingElapsed / LANDING_MOVE_DURATION);
-    const headT = THREE.MathUtils.lerp(-0.04, 1.08, moveT);
-    const dissolveAlpha = landingDissolve > 0
-      ? Math.max(0, 1 - landingDissolve / LANDING_DISSOLVE_DURATION)
-      : 1;
-    const alpha = globalAlpha * dissolveAlpha;
-
-    landingParticles.forEach((particle, i) => {
-      const pathT = headT - particle.along;
-      const sample = sampleLandingPath(LANDING_PATH, pathT);
-      const tangentLen = Math.hypot(sample.tx, sample.ty) || 1;
-      const normalX = -sample.ty / tangentLen;
-      const normalY = sample.tx / tangentLen;
-      const radial = rnd(particle.seed + landingElapsed * 0.4) - 0.5;
-      const alongJitter = (rnd(particle.seed + 2.1) - 0.5) * 0.012;
-      const wobbleX = Math.sin(landingElapsed * 2.4 + particle.seed) * 0.004;
-      const wobbleY = Math.cos(landingElapsed * 2.1 + particle.seed * 1.3) * 0.004;
-      const nx = sample.nx + normalX * particle.spreadX * radial + alongJitter + wobbleX;
-      const ny = sample.ny + normalY * particle.spreadY * radial + alongJitter * 0.6 + wobbleY;
-
-      const headProximity = THREE.MathUtils.clamp(1 - particle.along / LANDING_TRAIL_SPAN, 0, 1);
-      const sizeBoost = 0.82 + headProximity * 0.42;
-      const world = screenToWorld(nx, ny, aspect);
-      const color = paletteColor(particle.seed);
-      const pixelSize = particlePixelSize(particle.seed, nx, sizeBoost);
-      const particleAlpha = alpha * (0.55 + headProximity * 0.45);
-
-      staticPositionAttr.setXYZ(i, world.x, world.y, world.z);
-      staticSizeAttr.setX(i, pixelSize);
-      staticAlphaAttr.setX(i, particleAlpha);
-      staticColorAttr.setXYZ(
-        i,
-        clampChannel(color.x),
-        clampChannel(color.y),
-        clampChannel(color.z)
-      );
-    });
-
-    staticPositionAttr.needsUpdate = true;
-    staticColorAttr.needsUpdate = true;
-    staticSizeAttr.needsUpdate = true;
-    staticAlphaAttr.needsUpdate = true;
-  }
-
-  function createStaticSprites() {
-    staticPositionAttr = new THREE.InstancedBufferAttribute(
-      new Float32Array(SPRITE_COUNT * 3),
-      3
-    );
-    staticColorAttr = new THREE.InstancedBufferAttribute(
-      new Float32Array(SPRITE_COUNT * 3),
-      3
-    );
-    staticSizeAttr = new THREE.InstancedBufferAttribute(
-      new Float32Array(SPRITE_COUNT),
-      1
-    );
-    staticAlphaAttr = new THREE.InstancedBufferAttribute(
-      new Float32Array(SPRITE_COUNT),
-      1
-    );
-
-    staticMaterial = new THREE.PointsNodeMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      sizeAttenuation: false,
-      alphaTest: 0.02,
-    });
-    staticMaterial.positionNode = instancedBufferAttribute(staticPositionAttr);
-    staticMaterial.colorNode = instancedBufferAttribute(staticColorAttr);
-    staticMaterial.sizeNode = instancedBufferAttribute(staticSizeAttr, 'float');
-    staticMaterial.opacityNode = instancedBufferAttribute(staticAlphaAttr, 'float').mul(shapeCircle());
-
-    staticSprites = new THREE.Sprite(staticMaterial);
-    staticSprites.count = activeSpriteCount;
-    staticSprites.frustumCulled = false;
-    decorGroup.add(staticSprites);
-  }
-
-  function applyStaticBrightness(level) {
-    brightness = THREE.MathUtils.clamp(level, 0.55, 1.35);
-    writeStaticGeometry();
+  function resetWorldDrift() {
+    worldGroup.position.set(0, 0, 0);
   }
 
   function finishLanding() {
     const callback = landingCompleteCallback;
     landingCompleteCallback = null;
+    landingTrail = null;
     landingElapsed = 0;
-    landingDissolve = 0;
-    mode = 'static';
-    activeSpriteCount = DECOR_PARTICLE_COUNT;
-    staticSprites.count = activeSpriteCount;
+    landingDissolveElapsed = 0;
+    landingDissolving = false;
+    mode = 'idle';
+    resetWorldDrift();
+    trailEngine?.clearSlot(0);
+    trailEngine.particleMesh.visible = false;
+    stopLoop();
     callback?.();
   }
 
   function frameUpdate(delta) {
-    if (mode === 'landing') {
-      if (landingDissolve <= 0) {
+    if (mode === 'landing' && landingTrail && trailEngine) {
+      if (!landingDissolving) {
+        trailEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
+        updateLandingDrift();
         landingElapsed += delta;
-        writeLandingGeometry();
 
         if (landingElapsed >= LANDING_MOVE_DURATION) {
-          landingDissolve = Number.EPSILON;
+          landingDissolving = true;
         }
       } else {
-        landingDissolve += delta;
-        writeLandingGeometry();
+        trailEngine.tickTrail(landingTrail, delta, { spawn: false, audioStarted: false });
+        trailEngine.fadeSlot(landingTrail.particleStart, 1.0 / TRAIL_FADE_DURATION);
+        landingDissolveElapsed += delta;
 
-        if (landingDissolve >= LANDING_DISSOLVE_DURATION) {
+        if (landingDissolveElapsed >= TRAIL_FADE_DURATION) {
           finishLanding();
         }
       }
-    } else if (mode === 'recording' && liveAnalyser) {
-      const frame = getBreathFrameFromAnalyser(
-        liveAnalyser,
-        liveFrequencyData,
-        liveWaveformData,
-        MIC_SETTINGS
-      );
-      applyStaticBrightness(0.62 + frame.level * 0.72);
+    } else if (mode === 'recording' && recordingTrail && trailEngine) {
+      trailEngine.tickTrail(recordingTrail, delta, { spawn: true, audioStarted: true });
+    } else if (trailEngine) {
+      renderer.compute(trailEngine.updateParticles);
     }
 
     renderer.render(scene, camera);
@@ -289,8 +132,8 @@ export function createMicTrailRenderer(container) {
     }
 
     scene = new THREE.Scene();
-    decorGroup = new THREE.Group();
-    scene.add(decorGroup);
+    worldGroup = new THREE.Group();
+    scene.add(worldGroup);
 
     camera = new THREE.PerspectiveCamera(
       CAMERA_FOV,
@@ -311,9 +154,8 @@ export function createMicTrailRenderer(container) {
     await renderer.init();
     clock = new THREE.Clock();
 
-    initParticleStates();
-    createStaticSprites();
-    writeStaticGeometry();
+    trailEngine = await createTrailEngine(renderer, worldGroup, 1);
+    trailEngine.particleMesh.visible = false;
 
     window.addEventListener('resize', onResize);
     return true;
@@ -325,70 +167,100 @@ export function createMicTrailRenderer(container) {
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-
-    if (mode === 'landing') {
-      writeLandingGeometry();
-    } else {
-      writeStaticGeometry();
-    }
   }
 
   function playLanding(onComplete) {
+    if (!trailEngine) {
+      onComplete?.();
+      return { get dissolveStarted() { return false; } };
+    }
+
+    trailEngine.clearSlot(0);
+    resetWorldDrift();
+
+    landingTrail = createFirstTrail(0);
     mode = 'landing';
     landingElapsed = 0;
-    landingDissolve = 0;
+    landingDissolveElapsed = 0;
+    landingDissolving = false;
     landingCompleteCallback = onComplete ?? null;
-    activeSpriteCount = LANDING_PARTICLE_COUNT;
-    staticSprites.visible = true;
-    staticSprites.count = activeSpriteCount;
-    writeLandingGeometry();
+    trailEngine.particleMesh.visible = true;
+
     if (!loopRunning) startLoop();
 
     return {
       get dissolveStarted() {
-        return landingDissolve > 0;
+        return landingDissolving;
       },
     };
   }
 
-  function showStaticDecor(nextPositionIndex) {
-    positionIndex = nextPositionIndex;
-    mode = 'static';
-    activeSpriteCount = DECOR_PARTICLE_COUNT;
-    staticSprites.count = activeSpriteCount;
-    staticSprites.visible = true;
-    applyStaticBrightness(1);
-    if (!loopRunning) startLoop();
+  function setHomeView() {
+    mode = 'idle';
+    recordingTrail = null;
+    landingTrail = null;
+    resetWorldDrift();
+    trailEngine?.clearSlot(0);
+    if (trailEngine) {
+      trailEngine.particleMesh.visible = false;
+    }
+    stopLoop();
   }
 
   function setScreenLayout() {
-    // Posizioni fisse: nessun cambio layout tra stati.
+    // Nessun layout particellare in home.
   }
 
   function setPalette(nextPositionIndex) {
     positionIndex = nextPositionIndex;
-    if (mode === 'landing') {
-      writeLandingGeometry();
-    } else {
-      writeStaticGeometry();
+
+    if (landingTrail) {
+      applyPaletteToTrail(landingTrail, nextPositionIndex);
+    }
+
+    if (recordingTrail) {
+      applyPaletteToTrail(recordingTrail, nextPositionIndex);
     }
   }
 
   function startRecording(analyser, frequencyData, waveformData) {
+    if (!trailEngine) return;
+
     liveAnalyser = analyser;
     liveFrequencyData = frequencyData;
     liveWaveformData = waveformData;
+
+    trailEngine.clearSlot(0);
+    resetWorldDrift();
+
+    recordingTrail = createTrail(0, 0, positionIndex);
+    recordingTrail.mode = 'live';
+    recordingTrail.getLiveFrame = () =>
+      getBreathFrameFromAnalyser(
+        liveAnalyser,
+        liveFrequencyData,
+        liveWaveformData,
+        MIC_SETTINGS
+      );
+
     mode = 'recording';
-    activeSpriteCount = DECOR_PARTICLE_COUNT;
-    staticSprites.count = activeSpriteCount;
-    staticSprites.visible = true;
+    trailEngine.particleMesh.visible = true;
     if (!loopRunning) startLoop();
   }
 
   function stopRecordingVisual() {
     liveAnalyser = null;
-    mode = 'static';
-    applyStaticBrightness(1);
+    liveFrequencyData = null;
+    liveWaveformData = null;
+
+    if (recordingTrail && trailEngine) {
+      trailEngine.fadeSlot(recordingTrail.particleStart, 1.0 / TRAIL_FADE_DURATION);
+    }
+
+    recordingTrail = null;
+    mode = 'idle';
+    trailEngine.particleMesh.visible = false;
+    stopLoop();
   }
 
   function dispose() {
@@ -401,7 +273,7 @@ export function createMicTrailRenderer(container) {
   return {
     init,
     playLanding,
-    showStaticDecor,
+    setHomeView,
     setScreenLayout,
     setPalette,
     startRecording,

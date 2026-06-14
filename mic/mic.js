@@ -420,7 +420,7 @@ async function boot() {
     }
 
     if (rendererReady && trailRenderer) {
-      trailRenderer.showStaticDecor(currentPositionIndex);
+      trailRenderer.setHomeView();
     }
 
     showUi();
