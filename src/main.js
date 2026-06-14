@@ -1,7 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import WebGPU from 'three/addons/capabilities/WebGPU.js';
-import GUI from 'lil-gui';
 import {
   abs,
   atan,
@@ -39,11 +38,17 @@ import { fetchUploadAudio, startUploadPolling } from './telegramPoll.js';
 
 let resolvedApiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 const POLL_INTERVAL_MS = Number(import.meta.env.VITE_POLL_INTERVAL_MS || 1500);
+const AUTO_ROTATE_SPEED = 2;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+let worldSpinAngle = 0;
 
 let stopPolling = null;
 let phoneUiElements = null;
 
-let camera, scene, renderer, controls, clock, light;
+let camera, scene, renderer, controls, clock, light, worldGroup;
+let clearTrailParticlesCompute = null;
+let fadeTrailParticlesCompute = null;
 let sourceDot;
 let updateParticles, spawnParticles;
 let getInstanceColor;
@@ -59,6 +64,7 @@ let audioPhase = 0;
 let smoothedLevel = 0;
 
 const activeTrails = [];
+const fadingTrails = [];
 let activeTrailNumber = 0;
 let recordingTrail = null;
 let displayTrail = null;
@@ -97,14 +103,37 @@ const scenePointer = new THREE.Vector3();
 const raycastPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const raycaster = new THREE.Raycaster();
 
-const maxTrailSlots = 6;
+const maxActiveTrails = 10;
+const maxParticleSlots = 14;
+const TRAIL_FADE_DURATION = 2.8;
+const TRAIL_SPREAD_DISTANCE = 13.5;
+
+const TRAIL_POSITION_DIRECTIONS = [
+  new THREE.Vector3(0.0, 0.0, 0.0),
+  new THREE.Vector3(1.0, -0.55, -0.85),
+  new THREE.Vector3(-0.92, -0.85, 1.05),
+  new THREE.Vector3(0.88, 1.08, -1.18),
+  new THREE.Vector3(0.18, 1.48, 1.08),
+  new THREE.Vector3(-0.38, -1.58, -1.08),
+  new THREE.Vector3(1.28, 0.38, 0.88),
+  new THREE.Vector3(-1.18, 0.58, -0.78),
+  new THREE.Vector3(0.48, -1.28, 0.98),
+  new THREE.Vector3(-0.98, 0.98, 1.38),
+  new THREE.Vector3(0.72, -0.32, 1.45),
+  new THREE.Vector3(-1.32, -0.22, -0.55),
+  new THREE.Vector3(0.58, 1.05, 1.28),
+  new THREE.Vector3(-0.62, 1.35, -1.05),
+];
 
 // Ogni scia mantiene la stessa quantità di particelle che aveva prima.
 // Così il comportamento visivo della scia rimane uguale.
 const particlesPerTrail = Math.pow(2, 14);
-const nbParticles = particlesPerTrail * maxTrailSlots;
+const nbParticles = particlesPerTrail * maxParticleSlots;
 
 const currentTrailParticleStart = uniform(0);
+const clearTrailParticleStart = uniform(0);
+const fadeTrailParticleStart = uniform(0);
+const fadeTrailRate = uniform(1.0);
 
 const timeScale = uniform(0.8);
 const particleLifetime = uniform(0.65);
@@ -159,6 +188,8 @@ async function init() {
   camera.position.set(0, 0, 10);
 
   scene = new THREE.Scene();
+  worldGroup = new THREE.Group();
+  scene.add(worldGroup);
 
   clock = new THREE.Clock();
 
@@ -212,6 +243,34 @@ async function init() {
     })().compute(nbParticles)
   );
 
+  clearTrailParticlesCompute = Fn(() => {
+    const particleIndex = clearTrailParticleStart.add(instanceIndex).toInt();
+
+    particlePositions.element(particleIndex).xyz.assign(vec3(10000.0));
+    particlePositions.element(particleIndex).w.assign(-1.0);
+    particleProperties.element(particleIndex).w.assign(0.0);
+    particleProperties.element(particleIndex).z.assign(1.0);
+  })().compute(particlesPerTrail);
+
+  fadeTrailParticlesCompute = Fn(() => {
+    const particleIndex = fadeTrailParticleStart.add(instanceIndex).toInt();
+    const position = particlePositions.element(particleIndex).xyz;
+    const life = particlePositions.element(particleIndex).w;
+    const reveal = particleProperties.element(particleIndex).w;
+    const fadeStep = deltaTime.mul(fadeTrailRate);
+
+    If(life.greaterThan(0.0), () => {
+      life.subAssign(fadeStep);
+      reveal.subAssign(fadeStep.mul(1.35));
+
+      If(life.lessThanEqual(0.0), () => {
+        life.assign(-1.0);
+        reveal.assign(0.0);
+        position.assign(vec3(10000.0));
+      });
+    });
+  })().compute(particlesPerTrail);
+
   const particleQuadSize = 0.12;
   const particleGeom = new THREE.PlaneGeometry(particleQuadSize, particleQuadSize);
 
@@ -244,7 +303,7 @@ async function init() {
   const particleMesh = new THREE.InstancedMesh(particleGeom, particleMaterial, nbParticles);
   particleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   particleMesh.frustumCulled = false;
-  scene.add(particleMesh);
+  worldGroup.add(particleMesh);
 
   const sourceDotGeom = new THREE.SphereGeometry(0.035, 24, 24);
   const sourceDotMaterial = new THREE.MeshBasicMaterial({
@@ -255,7 +314,7 @@ async function init() {
 
   sourceDot = new THREE.Mesh(sourceDotGeom, sourceDotMaterial);
   sourceDot.frustumCulled = false;
-  scene.add(sourceDot);
+  worldGroup.add(sourceDot);
 
   updateParticles = Fn(() => {
     const position = particlePositions.element(instanceIndex).xyz;
@@ -435,12 +494,13 @@ async function init() {
   backgroundMaterial.colorNode = color(0x0);
 
   const backgroundMesh = new THREE.Mesh(backgroundGeom, backgroundMaterial);
-  scene.add(backgroundMesh);
+  worldGroup.add(backgroundMesh);
 
   light = new THREE.PointLight(0xffffff, 3000);
-  scene.add(light);
+  worldGroup.add(light);
 
   controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
   controls.enableDamping = true;
   controls.autoRotate = false;
   controls.maxDistance = 75;
@@ -448,48 +508,7 @@ async function init() {
   window.addEventListener('resize', onWindowResize);
 
   createPhoneUploadUI();
-
-  const gui = new GUI({ title: 'Parameters' });
-
-  gui.add(controls, 'autoRotate').name('Auto Rotate');
-  gui.add(controls, 'autoRotateSpeed', -10.0, 10.0, 0.01).name('Auto Rotate Speed');
-
-  const partFolder = gui.addFolder('Particles');
-  partFolder.add(timeScale, 'value', 0.0, 4.0, 0.01).name('timeScale');
-  partFolder.add(nbToSpawn, 'value', 1, 100, 1).name('Spawn rate');
-  partFolder.add(particleSize, 'value', 0.01, 3.0, 0.01).name('Size');
-  partFolder.add(particleLifetime, 'value', 0.01, 2.0, 0.01).name('Lifetime');
-  partFolder.add(colorRotationSpeed, 'value', 0.0, 5.0, 0.01).name('Color rotation speed');
-
-  const trajectoryFolder = gui.addFolder('Trajectory');
-  trajectoryFolder.add(trajectoryParams, 'speed', 0.1, 3.0, 0.01).name('Audio speed');
-  trajectoryFolder.add(trajectoryParams, 'smoothness', 0.02, 0.5, 0.01).name('Smoothness');
-  trajectoryFolder.add(trajectoryParams, 'range', 1.0, 8.0, 0.1).name('Range');
-  trajectoryFolder.add(trajectoryParams, 'directionChange', 0.05, 1.5, 0.01).name('Direction change');
-  trajectoryFolder.add(trajectoryParams, 'forwardPush', 0.1, 2.5, 0.01).name('Forward push');
-
-  const cymaticFolder = gui.addFolder('Cymatics');
-  cymaticFolder.add(cymaticScale, 'value', 0.05, 2.0, 0.01).name('Section scale');
-  cymaticFolder.add(cymaticDepth, 'value', 0.0, 1.0, 0.01).name('Section depth');
-
-  const micFolder = gui.addFolder('Phone audio analysis');
-  micFolder.add(microphoneSettings, 'inputGain', 1.0, 20.0, 0.1).name('Input gain').onChange((value) => {
-    if (audioGain) {
-      audioGain.gain.value = value;
-    }
-  });
-
-  micFolder.add(microphoneSettings, 'breathSensitivity', 4.0, 60.0, 0.5).name('Breath sensitivity');
-  micFolder.add(microphoneSettings, 'lowSensitivity', 1.0, 20.0, 0.1).name('Low sensitivity');
-  micFolder.add(microphoneSettings, 'midSensitivity', 1.0, 20.0, 0.1).name('Mid sensitivity');
-  micFolder.add(microphoneSettings, 'highSensitivity', 1.0, 25.0, 0.1).name('High sensitivity');
-
-  const turbFolder = gui.addFolder('Turbulence');
-  turbFolder.add(turbFriction, 'value', 0.0, 0.3, 0.01).name('Friction');
-  turbFolder.add(turbFrequency, 'value', 0.0, 1.0, 0.01).name('Frequency');
-  turbFolder.add(turbOctaves, 'value', 1, 9, 1).name('Octaves');
-  turbFolder.add(turbLacunarity, 'value', 1.0, 5.0, 0.01).name('Lacunarity');
-  turbFolder.add(turbGain, 'value', 0.0, 1.0, 0.01).name('Gain');
+  unlockAudioPlayback();
 
 }
 
@@ -515,6 +534,7 @@ function animate() {
 
   if (!simulationPaused) {
     renderer.compute(updateParticles);
+    updateFadingTrails(delta);
   }
 
   if (!simulationPaused && activeTrails.length > 0) {
@@ -578,7 +598,10 @@ function animate() {
     Math.sin(elapsedTime * 0.5) * 30,
     Math.cos(elapsedTime * 0.3) * 30,
     Math.sin(elapsedTime * 0.2) * 30
-  ); 
+  );
+
+  worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
+  worldGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
 
   controls.update();
   renderer.render(scene, camera);
@@ -593,9 +616,9 @@ function getMicPageUrl(micBase) {
 }
 
 function updatePhoneStatus(text, type = '') {
-  if (!phoneUiElements) return;
-  phoneUiElements.status.textContent = text;
-  phoneUiElements.status.className = `phone-status ${type}`.trim();
+  if (type === 'is-error') {
+    console.warn(text);
+  }
 }
 
 async function createPhoneUploadUI() {
@@ -605,57 +628,38 @@ async function createPhoneUploadUI() {
   const panel = document.createElement('div');
   panel.id = 'phone-upload-panel';
 
-  const title = document.createElement('h2');
-  title.textContent = 'Registra dal telefono';
-  panel.appendChild(title);
+  const slot = document.createElement('div');
+  slot.className = 'phone-qr-slot';
 
   const qrWrap = document.createElement('div');
   qrWrap.className = 'phone-qr-wrap';
+  qrWrap.title = 'Nascondi QR code';
   const qrCanvas = document.createElement('canvas');
   qrWrap.appendChild(qrCanvas);
-  panel.appendChild(qrWrap);
+  slot.appendChild(qrWrap);
 
-  const hint = document.createElement('p');
-  hint.className = 'phone-hint';
-  hint.textContent = network.mode === 'production'
-    ? 'Scansiona il QR: si apre la pagina su GitHub (funziona con 4G/Wi‑Fi).'
-    : network.isPhoneReady
-      ? 'Telefono e PC sulla stessa Wi‑Fi. Scansiona il QR e registra un respiro.'
-      : 'Per il telefono: crea .env con VITE_MIC_PAGE_URL (GitHub) e VITE_API_URL (Render), oppure usa la stessa Wi‑Fi.';
-  panel.appendChild(hint);
+  const recall = document.createElement('button');
+  recall.type = 'button';
+  recall.className = 'phone-qr-recall';
+  recall.textContent = 'Mostra QR code';
+  recall.setAttribute('aria-label', 'Mostra QR code');
+  slot.appendChild(recall);
 
-  const networkNote = document.createElement('p');
-  networkNote.className = 'phone-network-note';
-  networkNote.textContent = network.lanIp
-    ? `IP rete: ${network.lanIp} — apri sul PC: http://${network.lanIp}:${window.location.port || '5173'}`
-    : 'IP di rete non rilevato';
-  panel.appendChild(networkNote);
+  panel.appendChild(slot);
 
-  const status = document.createElement('div');
-  status.className = 'phone-status';
-  status.textContent = 'In attesa del backend…';
-  panel.appendChild(status);
+  qrWrap.addEventListener('click', () => {
+    panel.classList.add('is-hidden');
+  });
 
-  const link = document.createElement('a');
-  link.className = 'phone-link';
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  panel.appendChild(link);
-
-  const stopButton = document.createElement('button');
-  stopButton.type = 'button';
-  stopButton.className = 'phone-stop-btn';
-  stopButton.textContent = 'Ferma tutte le scie';
-  stopButton.addEventListener('click', stopAllTrails);
-  panel.appendChild(stopButton);
+  recall.addEventListener('click', () => {
+    panel.classList.remove('is-hidden');
+  });
 
   document.body.appendChild(panel);
 
-  phoneUiElements = { status, link, qrCanvas, hint, networkNote };
+  phoneUiElements = { qrCanvas, panel };
 
   const micUrl = getMicPageUrl(network.micBase);
-  link.href = micUrl;
-  link.textContent = micUrl;
 
   if (!network.isPhoneReady) {
     updatePhoneStatus('QR con localhost: il telefono non può aprirlo', 'is-error');
@@ -663,7 +667,7 @@ async function createPhoneUploadUI() {
 
   try {
     await QRCode.toCanvas(qrCanvas, micUrl, {
-      width: 168,
+      width: 96,
       margin: 1,
       color: {
         dark: '#ffffff',
@@ -672,7 +676,7 @@ async function createPhoneUploadUI() {
     });
   } catch (error) {
     console.error(error);
-    hint.textContent = 'QR code non disponibile. Apri il link sotto dal telefono.';
+    updatePhoneStatus('QR code non disponibile', 'is-error');
   }
 
   startPhoneUploadPolling();
@@ -702,12 +706,52 @@ function startPhoneUploadPolling() {
   });
 }
 
+async function playTrailRecording(audioBuffer) {
+  stopCurrentAudioSource();
+
+  if (!audioContext || audioContext.state === 'closed') {
+    audioContext = new AudioContext();
+  }
+
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume();
+  }
+
+  audioSource = audioContext.createBufferSource();
+  audioSource.buffer = audioBuffer;
+  audioSource.connect(audioContext.destination);
+
+  const source = audioSource;
+  source.addEventListener('ended', () => {
+    if (audioSource === source) {
+      audioSource = null;
+    }
+  });
+
+  source.start(0);
+}
+
+function unlockAudioPlayback() {
+  const unlock = async () => {
+    if (!audioContext || audioContext.state === 'closed') {
+      audioContext = new AudioContext();
+    }
+
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+  };
+
+  document.addEventListener('pointerdown', unlock, { once: true });
+  document.addEventListener('keydown', unlock, { once: true });
+}
+
 async function handleNewPhoneUpload(upload) {
   updatePhoneStatus(`Nuova registrazione #${upload.id}…`, '');
 
   try {
     const arrayBuffer = await fetchUploadAudio(resolvedApiUrl, upload.id);
-    const frames = await extractBreathFramesFromArrayBuffer(
+    const { frames, audioBuffer } = await extractBreathFramesFromArrayBuffer(
       arrayBuffer,
       microphoneSettings,
       breathLearnDuration
@@ -719,7 +763,9 @@ async function handleNewPhoneUpload(upload) {
 
     simulationPaused = false;
 
-    const trail = createTrail(activeTrailNumber);
+    const { slot, positionIndex } = prepareSlotForNewTrail();
+
+    const trail = createTrail(activeTrailNumber, slot, positionIndex);
     activeTrailNumber += 1;
 
     trail.mode = 'loop';
@@ -732,11 +778,145 @@ async function handleNewPhoneUpload(upload) {
     audioStarted = true;
     audioIsPlaying = true;
 
+    await playTrailRecording(audioBuffer);
+
     updatePhoneStatus(`Scia #${upload.id} creata (${upload.originalName || 'audio'})`, 'is-ready');
   } catch (error) {
     console.error(error);
     updatePhoneStatus(`Errore scia #${upload.id}: ${error.message}`, 'is-error');
   }
+}
+
+function getTrailPosition(positionIndex) {
+  const direction = TRAIL_POSITION_DIRECTIONS[positionIndex % TRAIL_POSITION_DIRECTIONS.length];
+
+  if (positionIndex === 0 && direction.lengthSq() === 0) {
+    return new THREE.Vector3(0.0, 0.0, 0.0);
+  }
+
+  return direction.clone().normalize().multiplyScalar(TRAIL_SPREAD_DISTANCE);
+}
+
+function getOccupiedPositionIndices(excludePosition = null) {
+  const occupied = new Set();
+
+  for (const trail of activeTrails) {
+    occupied.add(trail.positionIndex);
+  }
+
+  for (const entry of fadingTrails) {
+    occupied.add(entry.trail.positionIndex);
+  }
+
+  if (excludePosition !== null) {
+    occupied.add(excludePosition);
+  }
+
+  return occupied;
+}
+
+function getUsedParticleSlots() {
+  const used = new Set();
+
+  for (const trail of activeTrails) {
+    used.add(trail.slot);
+  }
+
+  for (const entry of fadingTrails) {
+    used.add(entry.trail.slot);
+  }
+
+  return used;
+}
+
+function finishTrailFade(entry) {
+  clearTrailParticleSlot(entry.trail.particleStart);
+
+  const fadeIndex = fadingTrails.indexOf(entry);
+  if (fadeIndex !== -1) {
+    fadingTrails.splice(fadeIndex, 1);
+  }
+
+  if (displayTrail === entry.trail) {
+    displayTrail = activeTrails[activeTrails.length - 1] || null;
+  }
+}
+
+function updateFadingTrails(delta) {
+  if (!fadeTrailParticlesCompute || fadingTrails.length === 0) return;
+
+  fadeTrailRate.value = 1.0 / TRAIL_FADE_DURATION;
+
+  for (let i = fadingTrails.length - 1; i >= 0; i--) {
+    const entry = fadingTrails[i];
+    entry.elapsed += delta;
+
+    fadeTrailParticleStart.value = entry.trail.particleStart;
+    renderer.compute(fadeTrailParticlesCompute);
+
+    if (entry.elapsed >= TRAIL_FADE_DURATION) {
+      finishTrailFade(entry);
+    }
+  }
+}
+
+function startTrailFadeOut(trail) {
+  fadingTrails.push({ trail, elapsed: 0 });
+}
+
+function allocateParticleSlot() {
+  const used = getUsedParticleSlots();
+
+  for (let slot = 0; slot < maxParticleSlots; slot++) {
+    if (!used.has(slot)) return slot;
+  }
+
+  if (fadingTrails.length > 0) {
+    finishTrailFade(fadingTrails[0]);
+    return allocateParticleSlot();
+  }
+
+  return 0;
+}
+
+function allocatePositionIndex(excludePosition = null) {
+  const occupied = getOccupiedPositionIndices(excludePosition);
+
+  for (let i = 0; i < TRAIL_POSITION_DIRECTIONS.length; i++) {
+    if (!occupied.has(i)) return i;
+  }
+
+  for (let i = 1; i < TRAIL_POSITION_DIRECTIONS.length; i++) {
+    if (i !== excludePosition) return i;
+  }
+
+  return 0;
+}
+
+function prepareSlotForNewTrail() {
+  let excludePosition = null;
+
+  if (activeTrails.length >= maxActiveTrails) {
+    const oldestTrail = activeTrails.shift();
+    excludePosition = oldestTrail.positionIndex;
+    startTrailFadeOut(oldestTrail);
+
+    if (recordingTrail === oldestTrail) {
+      recordingTrail = null;
+    }
+  }
+
+  return {
+    slot: allocateParticleSlot(),
+    positionIndex: allocatePositionIndex(excludePosition),
+  };
+}
+
+function clearTrailParticleSlot(particleStart) {
+  if (!clearTrailParticlesCompute) return;
+
+  clearTrailParticleStart.value = particleStart;
+  renderer.compute(clearTrailParticlesCompute);
 }
 
 function stopCurrentAudioSource() {
@@ -781,39 +961,10 @@ function stopAllTrails() {
   smoothedLevel = 0;
 }
 
-function getTrailStartPosition(index) {
-  const slot = index % maxTrailSlots;
-
-  // La prima traccia parte sempre dal centro dello schermo/scena.
-  if (index === 0) {
-    return new THREE.Vector3(0.0, 0.0, 0.0);
-  }
-
-  // Distanza grande tra le altre scie.
-  const trailDistance = 8.0;
-
-  const positions = [
-    // slot 0 non viene usato per la prima traccia,
-    // ma resta qui per sicurezza quando i trail fanno il giro dopo maxTrailSlots.
-    new THREE.Vector3(0.0, 0.0, 0.0),
-
-    new THREE.Vector3( 1.0, -0.7, -0.9),
-    new THREE.Vector3(-0.8, -1.0,  1.1),
-    new THREE.Vector3( 0.9,  1.0, -1.2),
-    new THREE.Vector3( 0.2,  1.4,  1.0),
-    new THREE.Vector3(-0.3, -1.5, -1.1)
-  ];
-
-  return positions[slot]
-    .clone()
-    .normalize()
-    .multiplyScalar(trailDistance);
-}
-
-function createTrail(index) {
-  const slot = index % maxTrailSlots;
-  const startPosition = getTrailStartPosition(index);
+function createTrail(index, slot, positionIndex) {
+  const startPosition = getTrailPosition(positionIndex);
   const homePosition = startPosition.clone();
+  const paletteIndex = positionIndex % 10;
   const trailPalettes = [
     {
       hue: 0.58,
@@ -852,17 +1003,46 @@ function createTrail(index) {
     },
     {
       hue: 0.95,
-      colorA: new THREE.Vector3(1.0, 0.0, 0.35), // fucsia/rosso
-      colorB: new THREE.Vector3(1.0, 0.0, 0.75), // pink
-      colorC: new THREE.Vector3(0.9, 0.0, 0.15), // cremisi
+      colorA: new THREE.Vector3(1.0, 0.0, 0.35),
+      colorB: new THREE.Vector3(1.0, 0.0, 0.75),
+      colorC: new THREE.Vector3(0.9, 0.0, 0.15),
+      saturation: 1.0
+    },
+    {
+      hue: 0.15,
+      colorA: new THREE.Vector3(1.0, 0.55, 0.0),
+      colorB: new THREE.Vector3(1.0, 0.85, 0.2),
+      colorC: new THREE.Vector3(0.85, 0.25, 0.0),
+      saturation: 1.0
+    },
+    {
+      hue: 0.48,
+      colorA: new THREE.Vector3(0.0, 0.75, 0.95),
+      colorB: new THREE.Vector3(0.15, 0.55, 1.0),
+      colorC: new THREE.Vector3(0.0, 0.95, 0.75),
+      saturation: 1.0
+    },
+    {
+      hue: 0.68,
+      colorA: new THREE.Vector3(0.55, 0.0, 0.95),
+      colorB: new THREE.Vector3(0.85, 0.15, 1.0),
+      colorC: new THREE.Vector3(0.35, 0.0, 0.85),
+      saturation: 1.0
+    },
+    {
+      hue: 0.02,
+      colorA: new THREE.Vector3(1.0, 0.25, 0.05),
+      colorB: new THREE.Vector3(1.0, 0.55, 0.15),
+      colorC: new THREE.Vector3(0.95, 0.05, 0.2),
       saturation: 1.0
     }
   ];
 
-  const trailPalette = trailPalettes[slot];
+  const trailPalette = trailPalettes[paletteIndex];
 
   return {
     slot,
+    positionIndex,
     particleStart: slot * particlesPerTrail,
     spawnIndex: 0,
 
@@ -913,7 +1093,9 @@ async function startMicrophoneRecording(deviceId = null) {
 
   simulationPaused = false;
 
-  const trail = createTrail(activeTrailNumber);
+  const { slot, positionIndex } = prepareSlotForNewTrail();
+
+  const trail = createTrail(activeTrailNumber, slot, positionIndex);
   activeTrailNumber++;
 
   activeTrails.push(trail);

@@ -54,8 +54,8 @@ export async function extractBreathFramesFromArrayBuffer(arrayBuffer, settings, 
   const ctx = new AudioContext();
   const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
 
-  return new Promise((resolve, reject) => {
-    const frames = [];
+  const frames = await new Promise((resolve, reject) => {
+    const collectedFrames = [];
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
 
@@ -78,14 +78,14 @@ export async function extractBreathFramesFromArrayBuffer(arrayBuffer, settings, 
       if (elapsed >= duration) {
         source.stop();
         ctx.close().catch(() => {});
-        resolve(frames);
+        resolve(collectedFrames);
         return;
       }
 
       if (elapsed >= nextSample) {
         analyserNode.getByteFrequencyData(frequencyData);
         analyserNode.getByteTimeDomainData(waveformData);
-        frames.push(analyzeBreathFrame(frequencyData, waveformData, settings));
+        collectedFrames.push(analyzeBreathFrame(frequencyData, waveformData, settings));
         nextSample += sampleInterval;
       }
 
@@ -99,4 +99,6 @@ export async function extractBreathFramesFromArrayBuffer(arrayBuffer, settings, 
 
     requestAnimationFrame(tick);
   });
+
+  return { frames, audioBuffer };
 }

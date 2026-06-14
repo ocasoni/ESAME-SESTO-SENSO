@@ -73,81 +73,68 @@ small {
 
 #phone-upload-panel {
   position: absolute;
-  top: 16px;
   right: 16px;
+  bottom: 16px;
   z-index: 15;
-  width: 240px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(10, 12, 16, 0.88);
-  backdrop-filter: blur(8px);
-  font-size: 12px;
 }
 
-#phone-upload-panel h2 {
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 600;
+.phone-qr-slot {
+  position: relative;
+  width: 108px;
+  height: 108px;
 }
 
 .phone-qr-wrap {
-  display: grid;
-  place-items: center;
-  padding: 8px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  margin-bottom: 10px;
-}
-
-.phone-hint {
-  margin: 0 0 10px;
-  line-height: 1.45;
-  opacity: 0.78;
-}
-
-.phone-status {
-  padding: 7px 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  margin-bottom: 8px;
-  line-height: 1.35;
-}
-
-.phone-status.is-ready {
-  background: rgba(20, 184, 166, 0.16);
-  color: #8ef5e8;
-}
-
-.phone-status.is-error {
-  background: rgba(255, 120, 0, 0.16);
-  color: #ffc58a;
-}
-
-.phone-link {
+  position: absolute;
+  right: 0;
+  bottom: 0;
   display: block;
-  margin-bottom: 10px;
-  color: #7ec8ff;
-  font-size: 10px;
-  word-break: break-all;
-  line-height: 1.35;
-}
-
-.phone-network-note {
-  margin: 0 0 10px;
-  font-size: 11px;
-  line-height: 1.4;
-  color: #9fd4ff;
-  opacity: 0.9;
-}
-
-.phone-stop-btn {
-  width: 100%;
-  padding: 10px 12px;
+  padding: 6px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 12, 16, 0.55);
+  backdrop-filter: blur(4px);
   cursor: pointer;
+  transition: transform 0.4s ease, opacity 0.3s ease;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+#phone-upload-panel.is-hidden .phone-qr-wrap {
+  transform: translateX(calc(100% + 32px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.phone-qr-wrap canvas {
+  display: block;
+  width: 96px;
+  height: 96px;
+  pointer-events: none;
+}
+
+.phone-qr-recall {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  appearance: none;
+  color: rgba(255, 255, 255, 0.82);
+  font: 500 11px/1.35 Arial, Helvetica, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease 0.12s;
+}
+
+.phone-qr-recall:hover {
+  color: #fff;
+}
+
+#phone-upload-panel.is-hidden .phone-qr-recall {
+  opacity: 1;
+  pointer-events: auto;
 }
