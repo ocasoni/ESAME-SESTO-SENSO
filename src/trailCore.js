@@ -200,6 +200,7 @@ export function getLoopedBreathFrame(trail, delta) {
 export async function createTrailEngine(renderer, worldGroup, slotCount = 1, options = {}) {
   const slotParticles = options.particlesPerTrail ?? particlesPerTrail;
   const vividColors = options.vividColors ?? false;
+  const instantReveal = options.instantReveal ?? vividColors;
   const nbParticles = slotParticles * slotCount;
 
   const currentTrailParticleStart = uniform(0);
@@ -486,7 +487,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
       pos.add(cymaticOffset)
     );
 
-    particleProperty.w.assign(0.80);
+    particleProperty.w.assign(instantReveal ? float(1.0) : float(0.80));
   })().compute(nbToSpawn.value).label('Spawn Particles');
 
   const particleQuadSize = 0.12;
@@ -506,7 +507,11 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
       ? colorBrightness.mul(0.95)
       : colorBrightness.mul(0.65).add(0.35);
 
-    return particleColors.toAttribute().xyz
+    const color = vividColors
+      ? getInstanceColor(instanceIndex)
+      : particleColors.toAttribute().xyz;
+
+    return color
       .mul(life)
       .mul(reveal)
       .mul(liveBrightness);

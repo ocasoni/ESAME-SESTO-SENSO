@@ -95,17 +95,17 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
+  gap: 10px;
   padding-bottom: 8vh;
 }
 
 .mic-message {
-  margin: 0;
+  margin: 0 0 2px;
   max-width: 320px;
   text-align: center;
   font-size: 0.92rem;
   line-height: 1.28;
-  min-height: 3.2em;
+  min-height: 2.4em;
   opacity: 0.9;
   white-space: pre-line;
 }

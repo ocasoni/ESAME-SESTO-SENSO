@@ -32,20 +32,15 @@ const MIC_SETTINGS = {
 };
 
 const COLOR_GAIN = 2.45;
-const TRAIL_QUAD_SIZE = 0.12;
-const TRAIL_PARTICLE_SCALE = 0.45;
-const LANDING_WORLD_DIAMETER = TRAIL_QUAD_SIZE * TRAIL_PARTICLE_SCALE;
 
 function rnd(seed) {
   const x = Math.sin(seed * 127.1 + seed * 311.7) * 43758.5453;
   return x - Math.floor(x);
 }
 
-function particleWorldDiameter(seed) {
+function particlePixelSize(seed) {
   const mix = rnd(seed * 3.17);
-  const px = THREE.MathUtils.lerp(2.2, 9.8, mix);
-  const refPx = 4.6;
-  return LANDING_WORLD_DIAMETER * (px / refPx);
+  return THREE.MathUtils.lerp(7, 20, mix);
 }
 
 function screenToWorld(nx, ny, aspect) {
@@ -128,7 +123,7 @@ export function createMicTrailRenderer(container) {
       const world = screenToWorld(particle.nx, particle.ny, aspect);
       const color = paletteColor(particle.seed);
       const alpha = particle.alpha;
-      const worldSize = particleWorldDiameter(particle.seed);
+      const worldSize = particlePixelSize(particle.seed);
 
       posAttr.setXYZ(i, world.x, world.y, world.z);
       sizeAttr.setX(i, worldSize);

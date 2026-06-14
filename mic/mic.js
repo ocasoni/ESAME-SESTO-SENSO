@@ -5,6 +5,7 @@ const API_URL = (params.get('api') || '').replace(/\/$/, '');
 const UPLOAD_SECRET = params.get('secret') || '';
 const RECORD_SECONDS = 20;
 const TRAIL_POLL_MS = 1200;
+const POST_UPLOAD_COMPLETE_MS = 20000;
 
 const uiEl = document.getElementById('mic-ui');
 const messageEl = document.getElementById('mic-message');
@@ -57,6 +58,25 @@ let trailPollTimer = null;
 let currentPositionIndex = 0;
 let lastUploadId = null;
 let lockedPositionIndex = null;
+let uploadCompleteTimer = null;
+
+function clearUploadCompleteTimer() {
+  if (uploadCompleteTimer) {
+    clearTimeout(uploadCompleteTimer);
+    uploadCompleteTimer = null;
+  }
+}
+
+function scheduleUploadComplete() {
+  clearUploadCompleteTimer();
+  uploadCompleteTimer = setTimeout(() => {
+    if (lastUploadId == null || (state !== 'waiting' && state !== 'generating')) {
+      return;
+    }
+    setState('complete');
+    trailRenderer?.setPalette(lockedPositionIndex ?? currentPositionIndex);
+  }, POST_UPLOAD_COMPLETE_MS);
+}
 
 function setState(nextState) {
   state = nextState;
@@ -138,22 +158,10 @@ function startTrailPolling() {
 
     if (state === 'waiting' && lastUploadId != null) {
       if (trailState.drawingUploadId === lastUploadId) {
-        setState('generating');
         if (Number.isFinite(trailState.lastTrailPositionIndex)) {
           lockedPositionIndex = trailState.lastTrailPositionIndex;
           trailRenderer?.setPalette(trailState.lastTrailPositionIndex);
         }
-      }
-    }
-
-    if (state === 'generating' && lastUploadId != null) {
-      if (Number.isFinite(trailState.lastTrailPositionIndex)) {
-        lockedPositionIndex = trailState.lastTrailPositionIndex;
-        trailRenderer?.setPalette(trailState.lastTrailPositionIndex);
-      }
-
-      if (trailState.lastCompletedUploadId === lastUploadId) {
-        setState('complete');
       }
     }
   }, TRAIL_POLL_MS);
@@ -197,6 +205,8 @@ async function startRecording() {
   }
 
   await refreshHomePalette();
+
+  clearUploadCompleteTimer();
 
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -332,6 +342,7 @@ async function sendRecording() {
 
     recordedBlob = null;
     lastUploadId = data.id;
+    scheduleUploadComplete();
   } catch (error) {
     console.error(error);
     setState('error');
@@ -381,4 +392,7 @@ async function boot() {
 
 boot();
 
-window.addEventListener('beforeunload', stopTrailPolling);
+window.addEventListener('beforeunload', () => {
+  stopTrailPolling();
+  clearUploadCompleteTimer();
+});
