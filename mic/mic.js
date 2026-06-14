@@ -94,11 +94,13 @@ function hideLandingText() {
   landingTextEl?.classList.remove('is-visible', 'is-fading');
 }
 
+const HOME_FADE_MS = 900;
+
 function showUi() {
   hideLandingText();
   uiEl.classList.add('is-visible');
   uiEl.classList.remove('is-landing');
-  trailRenderer?.fadeInHome(900);
+  trailRenderer?.fadeInHome(HOME_FADE_MS);
 }
 
 function setProgress(ratio) {

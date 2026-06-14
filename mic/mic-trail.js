@@ -31,25 +31,20 @@ const MIC_RIBBONS = [
     p1: { nx: 0.72, ny: 0.58 },
     p2: { nx: 0.48, ny: 1.02 },
     p3: { nx: 0.28, ny: 0.78 },
-    steps: 55,
+    steps: 60,
     breathOffset: 0.8,
+    zoom: 1.22,
+    focal: { nx: 0.46, ny: 0.86 },
   },
   {
     p0: { nx: 0.28, ny: 0.78 },
     p1: { nx: 0.14, ny: 0.96 },
     p2: { nx: 0.02, ny: 0.62 },
     p3: { nx: -0.18, ny: 0.52 },
-    steps: 55,
+    steps: 60,
     breathOffset: 1.0,
-  },
-  {
-    // angolo basso-sinistra → sale verso centro-basso
-    p0: { nx: -0.1, ny: 1.06 },
-    p1: { nx: 0.04, ny: 0.82 },
-    p2: { nx: 0.2, ny: 0.66 },
-    p3: { nx: 0.4, ny: 0.58 },
-    steps: 75,
-    breathOffset: 1.2,
+    zoom: 1.22,
+    focal: { nx: 0.46, ny: 0.86 },
   },
   {
     // alto-destra: entra nello schermo, curva, esce a destra
@@ -61,6 +56,16 @@ const MIC_RIBBONS = [
     breathOffset: 1.5,
   },
 ];
+
+function applyRibbonZoom(point, ribbon) {
+  if (!ribbon.zoom) return point;
+
+  const focal = ribbon.focal ?? { nx: 0.5, ny: 0.85 };
+  return {
+    nx: focal.nx + (point.nx - focal.nx) * ribbon.zoom,
+    ny: focal.ny + (point.ny - focal.ny) * ribbon.zoom,
+  };
+}
 
 function cubicBezierNorm(t, p0, p1, p2, p3) {
   const u = 1 - t;
@@ -82,8 +87,8 @@ function spawnRibbonAlongBezier(trail, ribbon, camera, engine) {
   for (let i = 0; i < steps; i += 1) {
     const t0 = i / steps;
     const t1 = (i + 1) / steps;
-    const a = cubicBezierNorm(t0, p0, p1, p2, p3);
-    const b = cubicBezierNorm(t1, p0, p1, p2, p3);
+    const a = applyRibbonZoom(cubicBezierNorm(t0, p0, p1, p2, p3), ribbon);
+    const b = applyRibbonZoom(cubicBezierNorm(t1, p0, p1, p2, p3), ribbon);
     const prev = screenNormToWorld(a.nx, a.ny, camera);
     const curr = screenNormToWorld(b.nx, b.ny, camera);
 
@@ -145,11 +150,21 @@ export function createMicTrailRenderer(container) {
   function currentHomeFade() {
     if (homeFadeDuration <= 0) return homeFadeTarget;
     const t = THREE.MathUtils.clamp((performance.now() - homeFadeStart) / homeFadeDuration, 0, 1);
-    return THREE.MathUtils.lerp(homeFade, homeFadeTarget, t);
+    const eased = t * t * (3 - 2 * t);
+    return THREE.MathUtils.lerp(homeFade, homeFadeTarget, eased);
+  }
+
+  function isHomeFadingIn() {
+    return (
+      homeFadeDuration > 0 &&
+      homeFadeTarget > homeFade &&
+      performance.now() - homeFadeStart < homeFadeDuration
+    );
   }
 
   function renderStaticFrame(delta, { pulse = false } = {}) {
     const fade = mode === 'home' || mode === 'uploading' || mode === 'sent' ? currentHomeFade() : 1;
+    const targetBrightness = baseBrightness * fade;
 
     if (pulse && liveAnalyser) {
       const frame = getBreathFrameFromAnalyser(
@@ -166,10 +181,12 @@ export function createMicTrailRenderer(container) {
       smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, inputLevel, 0.32);
       const brightness = baseBrightness * (0.45 + smoothedLevel * 2.6);
       engine.uniforms.colorBrightness.value = brightness * fade;
+    } else if (isHomeFadingIn()) {
+      engine.uniforms.colorBrightness.value = targetBrightness;
     } else {
       engine.uniforms.colorBrightness.value = THREE.MathUtils.lerp(
         engine.uniforms.colorBrightness.value,
-        baseBrightness * fade,
+        targetBrightness,
         0.08
       );
     }
