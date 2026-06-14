@@ -1,3 +1,5 @@
+import { runMicSplash } from './mic-splash.js';
+
 const params = new URLSearchParams(window.location.search);
 const API_URL = (params.get('api') || '').replace(/\/$/, '');
 const UPLOAD_SECRET = params.get('secret') || '';
@@ -179,4 +181,7 @@ recordBtn.addEventListener('click', startRecording);
 stopBtn.addEventListener('click', stopRecording);
 sendBtn.addEventListener('click', sendRecording);
 
-ensureApiConfigured();
+runMicSplash().then(() => {
+  pageEl.classList.add('is-visible');
+  ensureApiConfigured();
+});

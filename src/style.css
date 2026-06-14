@@ -12,6 +12,22 @@ canvas {
   display: block;
 }
 
+.app-title {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 15;
+  margin: 0;
+  font-family: "EB Garamond", Garamond, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(1.6rem, 3.2vw, 2.4rem);
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+
 #info {
   position: absolute;
   inset: 16px 16px auto 16px;

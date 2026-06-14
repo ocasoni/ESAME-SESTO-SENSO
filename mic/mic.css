@@ -18,6 +18,35 @@ body {
   margin: 0 auto;
   padding: 28px 20px 48px;
   text-align: center;
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+
+.mic-page.is-visible {
+  opacity: 1;
+}
+
+.mic-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #000;
+  opacity: 1;
+  transition: opacity 0.9s ease;
+}
+
+.mic-splash.is-exiting {
+  opacity: 0;
+}
+
+.mic-splash.is-hidden {
+  pointer-events: none;
+}
+
+#mic-splash-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .mic-badge {

@@ -107,6 +107,8 @@ const maxActiveTrails = 10;
 const maxParticleSlots = 14;
 const TRAIL_FADE_DURATION = 2.8;
 const TRAIL_SPREAD_DISTANCE = 13.5;
+const INITIAL_CAMERA_FOV = 59;
+const INITIAL_CAMERA_DISTANCE = 20;
 
 const TRAIL_POSITION_DIRECTIONS = [
   new THREE.Vector3(0.0, 0.0, 0.0),
@@ -184,8 +186,8 @@ async function init() {
     throw new Error('No WebGPU support');
   }
 
-  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
-  camera.position.set(0, 0, 10);
+  camera = new THREE.PerspectiveCamera(INITIAL_CAMERA_FOV, window.innerWidth / window.innerHeight, 0.1, 200);
+  camera.position.set(0, 0, INITIAL_CAMERA_DISTANCE);
 
   scene = new THREE.Scene();
   worldGroup = new THREE.Group();
@@ -641,8 +643,8 @@ async function createPhoneUploadUI() {
   const recall = document.createElement('button');
   recall.type = 'button';
   recall.className = 'phone-qr-recall';
-  recall.textContent = 'Mostra QR code';
-  recall.setAttribute('aria-label', 'Mostra QR code');
+  recall.textContent = 'QR code';
+  recall.setAttribute('aria-label', 'QR code');
   slot.appendChild(recall);
 
   panel.appendChild(slot);
