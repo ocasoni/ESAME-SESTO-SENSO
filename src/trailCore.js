@@ -502,19 +502,22 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   particleMaterial.scaleNode = vec2(particleProperties.toAttribute().x);
   particleMaterial.rotationNode = atan(particleVelocities.toAttribute().y, particleVelocities.toAttribute().x);
 
-  particleMaterial.colorNode = Fn(() => {
-    const life = particlePositions.toAttribute().w;
-    const reveal = particleProperties.toAttribute().w;
-    const color = vividColors
-      ? getInstanceColor(instanceIndex)
-      : particleColors.toAttribute().xyz;
+  if (vividColors) {
+    particleMaterial.colorNode = Fn(() => {
+      return getInstanceColor(instanceIndex).mul(colorBrightness.mul(0.88));
+    })();
+  } else {
+    particleMaterial.colorNode = Fn(() => {
+      const life = particlePositions.toAttribute().w;
+      const reveal = particleProperties.toAttribute().w;
+      const liveBrightness = colorBrightness.mul(0.65).add(0.35);
 
-    const liveBrightness = vividColors
-      ? colorBrightness.mul(0.72)
-      : colorBrightness.mul(0.65).add(0.35);
-
-    return color.mul(life).mul(reveal).mul(liveBrightness);
-  })();
+      return particleColors.toAttribute().xyz
+        .mul(life)
+        .mul(reveal)
+        .mul(liveBrightness);
+    })();
+  }
 
   particleMaterial.opacityNode = Fn(() => {
     const circle = step(uv().xy.sub(0.5).length(), 0.5);

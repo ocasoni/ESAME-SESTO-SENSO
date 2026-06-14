@@ -367,27 +367,40 @@ async function boot() {
   uiEl.classList.add('is-landing');
   landingCaptionEl?.classList.add('is-visible');
 
-  trailRenderer = createMicTrailRenderer(canvasEl);
-  const ready = await trailRenderer.init();
+  let rendererReady = false;
 
-  if (ready) {
-    await trailRenderer.runLanding({
-      onTrailFadeStart: () => {
-        landingCaptionEl?.classList.remove('is-visible');
-        landingCaptionEl?.classList.add('is-exiting');
-      },
-    });
-    await refreshHomePalette();
-    trailRenderer.showStaticDecor(currentPositionIndex);
+  try {
+    trailRenderer = createMicTrailRenderer(canvasEl);
+    rendererReady = await trailRenderer.init();
+
+    if (rendererReady) {
+      await trailRenderer.runLanding({
+        onTrailFadeStart: () => {
+          landingCaptionEl?.classList.remove('is-visible');
+          landingCaptionEl?.classList.add('is-exiting');
+        },
+      });
+      await refreshHomePalette();
+      trailRenderer.showStaticDecor(currentPositionIndex);
+    }
+  } catch (error) {
+    console.error('Errore avvio landing:', error);
+  } finally {
+    landingCaptionEl?.classList.remove('is-visible', 'is-exiting');
+    uiEl.classList.remove('is-landing');
+
+    const apiOk = await ensureApiConfigured();
+    if (apiOk) {
+      setState('idle');
+      trailRenderer?.setScreenLayout();
+    }
+
+    if (rendererReady && trailRenderer) {
+      trailRenderer.showStaticDecor(currentPositionIndex);
+    }
+
+    showUi();
   }
-
-  const apiOk = await ensureApiConfigured();
-  if (apiOk) {
-    setState('idle');
-    trailRenderer?.setScreenLayout('idle');
-  }
-
-  showUi();
 }
 
 boot();

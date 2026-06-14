@@ -18,6 +18,7 @@ const AUTO_ROTATE_SPEED = 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const LANDING_MS = 5200;
 const LANDING_TAIL_MS = 1800;
+const LANDING_COLOR_BRIGHTNESS = 1.48;
 
 const MIC_SETTINGS = {
   inputGain: 4.0,
@@ -58,11 +59,6 @@ function clampChannel(value) {
   return Math.min(1, Math.max(0, value));
 }
 
-function paletteColor(seed) {
-  const palette = getTrailPalette(positionIndex);
-  return getParticleColor(palette, seed).multiplyScalar(STATIC_COLOR_SCALE);
-}
-
 export function createMicTrailRenderer(container) {
   let renderer = null;
   let scene = null;
@@ -94,6 +90,11 @@ export function createMicTrailRenderer(container) {
   let liveWaveformData = null;
 
   let particleStates = [];
+
+  function paletteColor(seed) {
+    const palette = getTrailPalette(positionIndex);
+    return getParticleColor(palette, seed).multiplyScalar(STATIC_COLOR_SCALE);
+  }
 
   function initParticleStates() {
     const layout = DECOR_LAYOUTS.home;
@@ -173,7 +174,20 @@ export function createMicTrailRenderer(container) {
     writeStaticGeometry();
   }
 
-  function renderFrame() {
+  function tickLandingFrame(delta, { spawn = true, fade = false } = {}) {
+    worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
+    landingGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
+
+    if (fade) {
+      landingEngine.fadeSlot(landingTrail.particleStart, 1.05);
+      renderer.compute(landingEngine.updateParticles);
+    } else if (spawn) {
+      landingEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
+      landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
+    } else {
+      renderer.compute(landingEngine.updateParticles);
+    }
+
     renderer.render(scene, camera);
   }
 
@@ -181,26 +195,16 @@ export function createMicTrailRenderer(container) {
     if (mode === 'landing') {
       const elapsed = performance.now() - landingStartedAt;
 
-      worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
-      landingGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
-
       if (!landingFadeStarted && elapsed >= LANDING_MS) {
         landingFadeStarted = true;
         onLandingFadeStart?.();
       }
 
       if (elapsed < LANDING_MS) {
-        landingEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
-        landingEngine.uniforms.colorBrightness.value = Math.min(
-          landingEngine.uniforms.colorBrightness.value,
-          1.35
-        );
+        tickLandingFrame(delta, { spawn: true });
       } else {
-        landingEngine.fadeSlot(landingTrail.particleStart, 1.05);
-        renderer.compute(landingEngine.updateParticles);
+        tickLandingFrame(delta, { spawn: false, fade: true });
       }
-
-      renderFrame();
       return;
     }
 
@@ -214,7 +218,7 @@ export function createMicTrailRenderer(container) {
       applyStaticBrightness(0.62 + frame.level * 0.72);
     }
 
-    renderFrame();
+    renderer.render(scene, camera);
   }
 
   function startLoop() {
@@ -261,12 +265,14 @@ export function createMicTrailRenderer(container) {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
     await renderer.init();
     clock = new THREE.Clock();
+
+    landingEngine = await createTrailEngine(renderer, landingGroup, 1, { vividColors: true });
+    landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
 
     initParticleStates();
     createStaticSprites();
@@ -290,17 +296,23 @@ export function createMicTrailRenderer(container) {
   }
 
   async function runLanding({ onTrailFadeStart } = {}) {
+    if (!landingEngine) return;
+
     onLandingFadeStart = onTrailFadeStart;
     landingFadeStarted = false;
-    landingEngine = await createTrailEngine(renderer, landingGroup, 1);
+
+    stopLoop();
+    landingEngine.clearSlot(0);
     landingTrail = createLandingTrail();
     applyPaletteToTrail(landingTrail, 0);
     landingEngine.applyTrailToGPU(landingTrail);
+    landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
 
     staticSprites.visible = false;
     mode = 'landing';
     landingStartedAt = performance.now();
     worldSpinAngle = 0;
+    landingGroup.quaternion.identity();
     startLoop();
 
     await new Promise((resolve) => {
@@ -309,9 +321,6 @@ export function createMicTrailRenderer(container) {
         if (elapsed >= LANDING_MS + LANDING_TAIL_MS) {
           stopLoop();
           landingEngine.clearSlot(0);
-          landingGroup.clear();
-          landingEngine = null;
-          landingTrail = null;
           landingGroup.quaternion.identity();
           onLandingFadeStart = null;
           resolve();
