@@ -24,7 +24,7 @@ function alongCurve(out, points, count, seedStart) {
     const localT = t * (points.length - 1) - idx;
     const a = points[idx];
     const b = points[idx + 1];
-    const jitter = (rnd(seedStart + i) - 0.5) * 0.014;
+    const jitter = (rnd(seedStart + i) - 0.5) * 0.012;
     out.push({
       nx: THREE.MathUtils.clamp(a.nx + (b.nx - a.nx) * localT + jitter, 0.015, 0.985),
       ny: THREE.MathUtils.clamp(a.ny + (b.ny - a.ny) * localT + jitter, 0.015, 0.985),
@@ -35,97 +35,34 @@ function alongCurve(out, points, count, seedStart) {
 
 export const DECOR_PARTICLE_COUNT = 108;
 
-function buildIdleLayout() {
+function buildHomeLayout() {
   const points = [];
-  cluster(points, 0.9, 0.07, 22, 0.09, 0.065, 10);
-  cluster(points, 0.1, 0.93, 34, 0.12, 0.08, 120);
-  cluster(points, 0.22, 0.82, 16, 0.07, 0.055, 220);
-  return normalizeCount(points);
-}
-
-function buildRecordingLayout() {
-  const points = [];
-  cluster(points, 0.9, 0.07, 20, 0.085, 0.06, 310);
+  cluster(points, 0.94, 0.08, 16, 0.05, 0.038, 10);
   alongCurve(
     points,
     [
-      { nx: 0.96, ny: 0.22 },
-      { nx: 0.98, ny: 0.38 },
-      { nx: 0.95, ny: 0.52 },
-      { nx: 0.97, ny: 0.66 },
+      { nx: 0.97, ny: 0.18 },
+      { nx: 0.98, ny: 0.34 },
+      { nx: 0.96, ny: 0.5 },
+      { nx: 0.97, ny: 0.64 },
+      { nx: 0.95, ny: 0.74 },
     ],
-    26,
-    410
+    30,
+    110
   );
   alongCurve(
     points,
     [
-      { nx: 0.04, ny: 0.97 },
-      { nx: 0.24, ny: 0.94 },
-      { nx: 0.48, ny: 0.92 },
-      { nx: 0.72, ny: 0.93 },
-      { nx: 0.94, ny: 0.96 },
-    ],
-    38,
-    510
-  );
-  return normalizeCount(points);
-}
-
-function buildWaitingLayout() {
-  const points = [];
-  cluster(points, 0.93, 0.1, 12, 0.05, 0.04, 610);
-  alongCurve(
-    points,
-    [
-      { nx: 0.98, ny: 0.3 },
-      { nx: 0.99, ny: 0.46 },
-      { nx: 0.96, ny: 0.62 },
-      { nx: 0.94, ny: 0.78 },
-    ],
-    22,
-    710
-  );
-  alongCurve(
-    points,
-    [
-      { nx: 0.03, ny: 0.95 },
-      { nx: 0.18, ny: 0.84 },
-      { nx: 0.36, ny: 0.76 },
-      { nx: 0.52, ny: 0.72 },
-    ],
-    42,
-    810
-  );
-  cluster(points, 0.08, 0.88, 14, 0.045, 0.035, 910);
-  return normalizeCount(points);
-}
-
-function buildCompleteLayout() {
-  const points = [];
-  alongCurve(
-    points,
-    [
-      { nx: 0.05, ny: 0.3 },
-      { nx: 0.04, ny: 0.4 },
-      { nx: 0.06, ny: 0.5 },
-    ],
-    24,
-    1010
-  );
-  alongCurve(
-    points,
-    [
-      { nx: 0.03, ny: 0.95 },
-      { nx: 0.24, ny: 0.98 },
-      { nx: 0.48, ny: 0.96 },
-      { nx: 0.72, ny: 0.91 },
-      { nx: 0.95, ny: 0.86 },
+      { nx: 0.03, ny: 0.96 },
+      { nx: 0.14, ny: 0.9 },
+      { nx: 0.3, ny: 0.82 },
+      { nx: 0.46, ny: 0.76 },
+      { nx: 0.6, ny: 0.72 },
     ],
     44,
-    1110
+    210
   );
-  cluster(points, 0.08, 0.46, 18, 0.035, 0.07, 1210);
+  cluster(points, 0.1, 0.9, 18, 0.055, 0.04, 310);
   return normalizeCount(points);
 }
 
@@ -145,15 +82,9 @@ function normalizeCount(points) {
 }
 
 export const DECOR_LAYOUTS = {
-  idle: buildIdleLayout(),
-  recording: buildRecordingLayout(),
-  waiting: buildWaitingLayout(),
-  complete: buildCompleteLayout(),
+  home: buildHomeLayout(),
 };
 
-export function layoutForMicState(state) {
-  if (state === 'recording') return 'recording';
-  if (state === 'waiting') return 'waiting';
-  if (state === 'generating' || state === 'complete') return 'complete';
-  return 'idle';
+export function layoutForMicState() {
+  return 'home';
 }

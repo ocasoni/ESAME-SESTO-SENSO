@@ -503,15 +503,17 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   particleMaterial.rotationNode = atan(particleVelocities.toAttribute().y, particleVelocities.toAttribute().x);
 
   particleMaterial.colorNode = Fn(() => {
+    const life = particlePositions.toAttribute().w;
+    const reveal = particleProperties.toAttribute().w;
     const color = vividColors
       ? getInstanceColor(instanceIndex)
       : particleColors.toAttribute().xyz;
 
     const liveBrightness = vividColors
-      ? colorBrightness
+      ? colorBrightness.mul(0.72)
       : colorBrightness.mul(0.65).add(0.35);
 
-    return color.mul(liveBrightness);
+    return color.mul(life).mul(reveal).mul(liveBrightness);
   })();
 
   particleMaterial.opacityNode = Fn(() => {

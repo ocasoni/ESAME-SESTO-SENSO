@@ -10,17 +10,14 @@ import {
 import {
   DECOR_LAYOUTS,
   DECOR_PARTICLE_COUNT,
-  layoutForMicState,
 } from './mic-decor-layouts.js';
 
 const CAMERA_FOV = 59;
 const CAMERA_DISTANCE = 20;
 const AUTO_ROTATE_SPEED = 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
-const LANDING_MS = 4000;
-const LANDING_TAIL_MS = 2400;
-const LANDING_COLOR_BRIGHTNESS = 2.15;
-const TRANSITION_STEP_MS = 55;
+const LANDING_MS = 5200;
+const LANDING_TAIL_MS = 1800;
 
 const MIC_SETTINGS = {
   inputGain: 4.0,
@@ -30,10 +27,9 @@ const MIC_SETTINGS = {
   highSensitivity: 7.0,
 };
 
-const COLOR_GAIN = 3.4;
+const STATIC_COLOR_SCALE = 1.1;
 const DOT_SIZE_MIN_PX = 18;
 const DOT_SIZE_MAX_PX = 40;
-const DOT_ALPHA = 1.0;
 
 function rnd(seed) {
   const x = Math.sin(seed * 127.1 + seed * 311.7) * 43758.5453;
@@ -58,14 +54,13 @@ function screenToWorld(nx, ny, aspect) {
   return new THREE.Vector3(x, y, 0);
 }
 
-function boostColor(color) {
-  const max = Math.max(color.x, color.y, color.z, 0.001);
-  const floor = 0.22;
-  const scaled = color.clone().multiplyScalar(COLOR_GAIN);
-  if (max * COLOR_GAIN < floor) {
-    scaled.multiplyScalar(floor / (max * COLOR_GAIN));
-  }
-  return scaled;
+function clampChannel(value) {
+  return Math.min(1, Math.max(0, value));
+}
+
+function paletteColor(seed) {
+  const palette = getTrailPalette(positionIndex);
+  return getParticleColor(palette, seed).multiplyScalar(STATIC_COLOR_SCALE);
 }
 
 export function createMicTrailRenderer(container) {
@@ -98,54 +93,37 @@ export function createMicTrailRenderer(container) {
   let liveFrequencyData = null;
   let liveWaveformData = null;
 
-  let currentLayout = 'idle';
   let particleStates = [];
-  let transitionQueue = [];
-  let transitionTimer = 0;
-  let baseColors = null;
 
-  function initParticleStates(layoutName) {
-    const layout = DECOR_LAYOUTS[layoutName];
+  function initParticleStates() {
+    const layout = DECOR_LAYOUTS.home;
     particleStates = layout.map((point, index) => ({
       nx: point.nx,
       ny: point.ny,
       seed: point.seed,
-      alpha: 1,
       index,
     }));
-  }
-
-  function paletteColor(seed) {
-    const palette = getTrailPalette(positionIndex);
-    return boostColor(getParticleColor(palette, seed));
   }
 
   function writeStaticGeometry() {
     if (!staticSprites) return;
 
     const aspect = window.innerWidth / window.innerHeight;
-    baseColors = new Float32Array(DECOR_PARTICLE_COUNT * 3);
 
     particleStates.forEach((particle, i) => {
       const world = screenToWorld(particle.nx, particle.ny, aspect);
       const color = paletteColor(particle.seed);
-      const alpha = particle.alpha * DOT_ALPHA;
       const pixelSize = particlePixelSize(particle.seed, particle.nx);
-      const colorBoost = brightness;
 
       staticPositionAttr.setXYZ(i, world.x, world.y, world.z);
       staticSizeAttr.setX(i, pixelSize);
-      staticAlphaAttr.setX(i, alpha);
+      staticAlphaAttr.setX(i, 1);
       staticColorAttr.setXYZ(
         i,
-        color.x * alpha * colorBoost,
-        color.y * alpha * colorBoost,
-        color.z * alpha * colorBoost
+        clampChannel(color.x * brightness),
+        clampChannel(color.y * brightness),
+        clampChannel(color.z * brightness)
       );
-
-      baseColors[i * 3] = color.x;
-      baseColors[i * 3 + 1] = color.y;
-      baseColors[i * 3 + 2] = color.z;
     });
 
     staticPositionAttr.needsUpdate = true;
@@ -175,7 +153,7 @@ export function createMicTrailRenderer(container) {
     staticMaterial = new THREE.PointsNodeMaterial({
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       sizeAttenuation: false,
       alphaTest: 0.02,
     });
@@ -191,57 +169,8 @@ export function createMicTrailRenderer(container) {
   }
 
   function applyStaticBrightness(level) {
-    brightness = THREE.MathUtils.clamp(level, 0.85, 1.65);
+    brightness = THREE.MathUtils.clamp(level, 0.55, 1.35);
     writeStaticGeometry();
-  }
-
-  function queueLayoutTransition(nextLayout) {
-    if (nextLayout === currentLayout && transitionQueue.length === 0) return;
-
-    const targets = DECOR_LAYOUTS[nextLayout];
-    transitionQueue = [];
-
-    for (let i = 0; i < DECOR_PARTICLE_COUNT; i += 1) {
-      transitionQueue.push({
-        index: i,
-        target: targets[i],
-        phase: 'out',
-      });
-    }
-
-    for (let i = transitionQueue.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [transitionQueue[i], transitionQueue[j]] = [transitionQueue[j], transitionQueue[i]];
-    }
-
-    currentLayout = nextLayout;
-    transitionTimer = 0;
-  }
-
-  function stepLayoutTransition(delta) {
-    if (!transitionQueue.length) return;
-
-    transitionTimer += delta * 1000;
-
-    while (transitionQueue.length && transitionTimer >= TRANSITION_STEP_MS) {
-      transitionTimer -= TRANSITION_STEP_MS;
-      const step = transitionQueue[0];
-      const particle = particleStates[step.index];
-
-      if (step.phase === 'out') {
-        particle.alpha = 0;
-        writeStaticGeometry();
-        step.phase = 'in';
-        continue;
-      }
-
-      transitionQueue.shift();
-      particle.nx = step.target.nx;
-      particle.ny = step.target.ny;
-      particle.seed = step.target.seed;
-      particle.alpha = 1;
-      writeStaticGeometry();
-    }
   }
 
   function renderFrame() {
@@ -262,7 +191,10 @@ export function createMicTrailRenderer(container) {
 
       if (elapsed < LANDING_MS) {
         landingEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
-        landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
+        landingEngine.uniforms.colorBrightness.value = Math.min(
+          landingEngine.uniforms.colorBrightness.value,
+          1.35
+        );
       } else {
         landingEngine.fadeSlot(landingTrail.particleStart, 1.05);
         renderer.compute(landingEngine.updateParticles);
@@ -272,8 +204,6 @@ export function createMicTrailRenderer(container) {
       return;
     }
 
-    stepLayoutTransition(delta);
-
     if (mode === 'recording' && liveAnalyser) {
       const frame = getBreathFrameFromAnalyser(
         liveAnalyser,
@@ -281,7 +211,7 @@ export function createMicTrailRenderer(container) {
         liveWaveformData,
         MIC_SETTINGS
       );
-      applyStaticBrightness(0.62 + frame.level * 0.95);
+      applyStaticBrightness(0.62 + frame.level * 0.72);
     }
 
     renderFrame();
@@ -329,16 +259,16 @@ export function createMicTrailRenderer(container) {
     renderer = new THREE.WebGPURenderer({ antialias: true, alpha: false });
     renderer.setClearColor(0x000000);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
     await renderer.init();
     clock = new THREE.Clock();
 
-    initParticleStates('idle');
+    initParticleStates();
     createStaticSprites();
     writeStaticGeometry();
     staticSprites.visible = false;
@@ -362,13 +292,9 @@ export function createMicTrailRenderer(container) {
   async function runLanding({ onTrailFadeStart } = {}) {
     onLandingFadeStart = onTrailFadeStart;
     landingFadeStarted = false;
-    landingEngine = await createTrailEngine(renderer, landingGroup, 1, { vividColors: true });
+    landingEngine = await createTrailEngine(renderer, landingGroup, 1);
     landingTrail = createLandingTrail();
     applyPaletteToTrail(landingTrail, 0);
-    landingTrail.colorA.multiplyScalar(1.28);
-    landingTrail.colorB.multiplyScalar(1.22);
-    landingTrail.colorC.multiplyScalar(1.28);
-    landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
     landingEngine.applyTrailToGPU(landingTrail);
 
     staticSprites.visible = false;
@@ -397,18 +323,16 @@ export function createMicTrailRenderer(container) {
     });
   }
 
-  function showStaticDecor(nextPositionIndex, layoutName = 'idle') {
+  function showStaticDecor(nextPositionIndex) {
     positionIndex = nextPositionIndex;
     mode = 'static';
     staticSprites.visible = true;
-    queueLayoutTransition(layoutName);
     applyStaticBrightness(1);
     if (!loopRunning) startLoop();
   }
 
-  function setScreenLayout(micState) {
-    const layoutName = layoutForMicState(micState);
-    queueLayoutTransition(layoutName);
+  function setScreenLayout() {
+    // Posizioni fisse: nessun cambio layout tra stati.
   }
 
   function setPalette(nextPositionIndex) {
@@ -422,7 +346,6 @@ export function createMicTrailRenderer(container) {
     liveWaveformData = waveformData;
     mode = 'recording';
     staticSprites.visible = true;
-    setScreenLayout('recording');
     if (!loopRunning) startLoop();
   }
 
