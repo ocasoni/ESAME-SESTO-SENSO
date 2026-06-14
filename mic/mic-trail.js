@@ -7,6 +7,7 @@ import {
   createTrail,
   createTrailEngine,
   getBreathFrameFromAnalyser,
+  particlesPerTrail,
 } from '../src/trailCore.js';
 
 const CAMERA_FOV = 59;
@@ -80,7 +81,7 @@ function cubicBezierNorm(t, p0, p1, p2, p3) {
   };
 }
 
-function spawnRibbonAlongBezier(trail, ribbon, camera, engine) {
+function spawnRibbonAlongBezier(trail, ribbon, camera, engine, homeParticles) {
   const { p0, p1, p2, p3, steps, breathOffset } = ribbon;
   const anchor = trail.position.clone();
 
@@ -99,8 +100,23 @@ function spawnRibbonAlongBezier(trail, ribbon, camera, engine) {
     trail.previousSpawnPosition.copy(prev);
     trail.spawnPosition.copy(curr);
     trail.audioDrivenPosition.copy(curr);
+
+    const spawnBefore = trail.spawnIndex;
     engine.applyTrailToGPU(trail);
     engine.tickTrail(trail, 0.016, { spawn: true, audioStarted: false });
+
+    const spawnCount = Math.round(engine.uniforms.nbToSpawn.value);
+    for (let p = 0; p < spawnCount; p += 1) {
+      const idx = (spawnBefore + p) % particlesPerTrail;
+      engine.setStaticParticleMeta(
+        idx,
+        Math.random() * Math.PI * 2,
+        0.35 + Math.random() * 0.95,
+        0.035 + Math.random() * 0.14,
+        t1
+      );
+      homeParticles.push({ index: idx });
+    }
   }
 }
 
@@ -133,7 +149,13 @@ export function createMicTrailRenderer(container) {
   let loopRunning = false;
   let staticReady = false;
   let baseBrightness = 1.35;
-  let smoothedLevel = 0;
+  let homeTime = 0;
+  let homeParticles = [];
+  let activeSparkles = [];
+  let lastSparkleRoll = 0;
+  let smoothedAudioLow = 0;
+  let smoothedAudioMid = 0;
+  let smoothedAudioHigh = 0;
   let homeFade = 0;
   let homeFadeTarget = 1;
   let homeFadeStart = 0;
@@ -154,17 +176,56 @@ export function createMicTrailRenderer(container) {
     return THREE.MathUtils.lerp(homeFade, homeFadeTarget, eased);
   }
 
-  function isHomeFadingIn() {
-    return (
-      homeFadeDuration > 0 &&
-      homeFadeTarget > homeFade &&
-      performance.now() - homeFadeStart < homeFadeDuration
-    );
+  function sparkleEnvelope(sparkle, now) {
+    const duration = sparkle.end - sparkle.start;
+    const t = (now - sparkle.start) / duration;
+    if (t >= 1) return 0;
+
+    const attack = 0.1;
+    if (t < attack) return (t / attack) * sparkle.peak;
+
+    const decay = 1 - (t - attack) / (1 - attack);
+    return sparkle.peak * decay * decay;
+  }
+
+  function updateHomeSparkles(now) {
+    activeSparkles = activeSparkles.filter((sparkle) => now < sparkle.end);
+
+    if (
+      homeParticles.length > 0 &&
+      activeSparkles.length < 10 &&
+      now - lastSparkleRoll > 280 + Math.random() * 520
+    ) {
+      lastSparkleRoll = now;
+      const picks = 1 + Math.floor(Math.random() * 2);
+
+      for (let i = 0; i < picks; i += 1) {
+        const particle = homeParticles[Math.floor(Math.random() * homeParticles.length)];
+        activeSparkles.push({
+          index: particle.index,
+          start: now,
+          end: now + 480 + Math.random() * 720,
+          peak: 0.1 + Math.random() * 0.32,
+        });
+      }
+    }
+
+    engine.clearSparkleIntensities();
+    for (const sparkle of activeSparkles) {
+      const intensity = sparkleEnvelope(sparkle, now);
+      if (intensity > 0.001) {
+        engine.addSparkleIntensity(sparkle.index, intensity);
+      }
+    }
   }
 
   function renderStaticFrame(delta, { pulse = false } = {}) {
-    const fade = mode === 'home' || mode === 'uploading' || mode === 'sent' ? currentHomeFade() : 1;
-    const targetBrightness = baseBrightness * fade;
+    homeTime += delta;
+
+    let audioLow = 0;
+    let audioMid = 0;
+    let audioHigh = 0;
+    let recording = 0;
 
     if (pulse && liveAnalyser) {
       const frame = getBreathFrameFromAnalyser(
@@ -173,23 +234,30 @@ export function createMicTrailRenderer(container) {
         liveWaveformData,
         MIC_SETTINGS
       );
-      const inputLevel = THREE.MathUtils.clamp(
-        frame.level * 0.55 + frame.lowBand * 0.25 + frame.midBand * 0.12 + frame.highBand * 0.08,
-        0,
-        1
-      );
-      smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, inputLevel, 0.32);
-      const brightness = baseBrightness * (0.45 + smoothedLevel * 2.6);
-      engine.uniforms.colorBrightness.value = brightness * fade;
-    } else if (isHomeFadingIn()) {
-      engine.uniforms.colorBrightness.value = targetBrightness;
+      smoothedAudioLow = THREE.MathUtils.lerp(smoothedAudioLow, frame.lowBand, 0.12);
+      smoothedAudioMid = THREE.MathUtils.lerp(smoothedAudioMid, frame.midBand, 0.12);
+      smoothedAudioHigh = THREE.MathUtils.lerp(smoothedAudioHigh, frame.highBand, 0.12);
+      audioLow = smoothedAudioLow;
+      audioMid = smoothedAudioMid;
+      audioHigh = smoothedAudioHigh;
+      recording = 1;
     } else {
-      engine.uniforms.colorBrightness.value = THREE.MathUtils.lerp(
-        engine.uniforms.colorBrightness.value,
-        targetBrightness,
-        0.08
-      );
+      smoothedAudioLow = THREE.MathUtils.lerp(smoothedAudioLow, 0, 0.05);
+      smoothedAudioMid = THREE.MathUtils.lerp(smoothedAudioMid, 0, 0.05);
+      smoothedAudioHigh = THREE.MathUtils.lerp(smoothedAudioHigh, 0, 0.05);
     }
+
+    if (mode === 'home' || mode === 'uploading' || mode === 'sent') {
+      updateHomeSparkles(performance.now());
+    }
+
+    engine.uniforms.colorBrightness.value = baseBrightness;
+    engine.applyStaticAppearance(trail, homeTime, {
+      low: audioLow,
+      mid: audioMid,
+      high: audioHigh,
+      recording,
+    });
 
     renderer.compute(engine.updateParticles);
     renderer.render(scene, camera);
@@ -281,7 +349,7 @@ export function createMicTrailRenderer(container) {
     container.appendChild(renderer.domElement);
 
     await renderer.init();
-    engine = await createTrailEngine(renderer, worldGroup, 1);
+    engine = await createTrailEngine(renderer, worldGroup, 1, { staticTwinkle: true });
     clock = new THREE.Clock();
 
     window.addEventListener('resize', onResize);
@@ -326,6 +394,13 @@ export function createMicTrailRenderer(container) {
   async function spawnStaticField(positionIndex) {
     engine.clearSlot(0);
     staticReady = false;
+    homeParticles = [];
+    activeSparkles = [];
+    lastSparkleRoll = performance.now();
+    homeTime = 0;
+    smoothedAudioLow = 0;
+    smoothedAudioMid = 0;
+    smoothedAudioHigh = 0;
 
     trail = createTrail(0, 0, positionIndex);
     trail.mode = 'loop';
@@ -337,13 +412,18 @@ export function createMicTrailRenderer(container) {
     targetPaletteIndex = positionIndex;
 
     for (const ribbon of MIC_RIBBONS) {
-      spawnRibbonAlongBezier(trail, ribbon, camera, engine);
+      spawnRibbonAlongBezier(trail, ribbon, camera, engine, homeParticles);
     }
 
+    engine.commitStaticParticleMeta();
+    engine.freezeStaticParticles(trail);
+
     staticReady = true;
-    homeFade = 0;
-    homeFadeTarget = 0;
-    engine.uniforms.colorBrightness.value = 0;
+    homeFade = 1;
+    homeFadeTarget = 1;
+    homeFadeDuration = 0;
+    engine.uniforms.colorBrightness.value = baseBrightness;
+    engine.applyStaticAppearance(trail, homeTime, { recording: 0 });
   }
 
   async function startHome(positionIndex) {
@@ -383,7 +463,9 @@ export function createMicTrailRenderer(container) {
     liveAnalyser = analyser;
     liveFrequencyData = frequencyData;
     liveWaveformData = waveformData;
-    smoothedLevel = 0;
+    smoothedAudioLow = 0;
+    smoothedAudioMid = 0;
+    smoothedAudioHigh = 0;
 
     if (!loopRunning) startLoop();
   }
@@ -391,9 +473,11 @@ export function createMicTrailRenderer(container) {
   function enterUploadingState() {
     mode = 'uploading';
     liveAnalyser = null;
-    smoothedLevel = 0;
+    smoothedAudioLow = 0;
+    smoothedAudioMid = 0;
+    smoothedAudioHigh = 0;
     if (engine) {
-      engine.uniforms.colorBrightness.value = baseBrightness * currentHomeFade();
+      engine.uniforms.colorBrightness.value = baseBrightness;
     }
   }
 

@@ -10,6 +10,7 @@ import {
   hash,
   If,
   instanceIndex,
+  max,
   mix,
   mx_fractal_noise_vec3,
   PI,
@@ -200,6 +201,7 @@ export function getLoopedBreathFrame(trail, delta) {
 export async function createTrailEngine(renderer, worldGroup, slotCount = 1, options = {}) {
   const slotParticles = options.particlesPerTrail ?? particlesPerTrail;
   const nbParticles = slotParticles * slotCount;
+  const staticTwinkle = options.staticTwinkle === true;
 
   const currentTrailParticleStart = uniform(0);
   const clearTrailParticleStart = uniform(0);
@@ -230,6 +232,27 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   const turbLacunarity = uniform(2.0);
   const turbGain = uniform(0.35);
   const freezeLifeThreshold = uniform(0.90);
+  const appearanceTime = uniform(0.0);
+  const appearanceAudioLow = uniform(0.0);
+  const appearanceAudioMid = uniform(0.0);
+  const appearanceAudioHigh = uniform(0.0);
+  const appearanceRecording = uniform(0.0);
+
+  let particleAppearanceAttr = null;
+  let sparkleIntensityAttr = null;
+  let particleAppearance = null;
+  let sparkleIntensity = null;
+  let appearanceData = null;
+  let sparkleIntensityData = null;
+
+  if (staticTwinkle) {
+    appearanceData = new Float32Array(nbParticles * 4);
+    sparkleIntensityData = new Float32Array(nbParticles);
+    particleAppearanceAttr = new THREE.StorageInstancedBufferAttribute(appearanceData, 4);
+    sparkleIntensityAttr = new THREE.StorageInstancedBufferAttribute(sparkleIntensityData, 1);
+    particleAppearance = storage(particleAppearanceAttr, 'vec4', nbParticles);
+    sparkleIntensity = storage(sparkleIntensityAttr, 'float', nbParticles);
+  }
 
   const runtime = {
     audioPhase: 0,
@@ -321,6 +344,66 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
       });
     });
   })().compute(slotParticles);
+
+  let freezeStaticSlot = null;
+  let updateStaticAppearance = null;
+
+  if (staticTwinkle) {
+    freezeStaticSlot = Fn(() => {
+      const particleIndex = currentTrailParticleStart.add(instanceIndex).toInt();
+      const life = particlePositions.element(particleIndex).w;
+
+      If(life.greaterThan(0.0), () => {
+        const position = particlePositions.element(particleIndex).xyz;
+        particleProperties.element(particleIndex).z.assign(1.0);
+        particlePositions.element(particleIndex).w.assign(0.9);
+        particleProperties.element(particleIndex).w.assign(1.0);
+        particleVelocities.element(particleIndex).xyz.assign(position);
+      });
+    })().compute(slotParticles);
+
+    updateStaticAppearance = Fn(() => {
+      const particleIndex = currentTrailParticleStart.add(instanceIndex).toInt();
+      const life = particlePositions.element(particleIndex).w;
+      const frozen = particleProperties.element(particleIndex).z;
+
+      If(life.greaterThan(0.0), () => {
+        If(frozen.greaterThan(0.5), () => {
+          const meta = particleAppearance.element(particleIndex);
+          const phase = meta.x;
+          const speed = meta.y;
+          const strength = meta.z;
+          const ribbonT = meta.w;
+
+          const sizeSeed = hash(particleIndex.toFloat());
+          const isSmall = step(sizeSeed, 0.52);
+          const isLarge = step(0.72, sizeSeed);
+
+          const tw = sin(appearanceTime.mul(speed).add(phase)).mul(0.5).add(0.5);
+          const twinkleBright = tw.mul(strength);
+
+          const midWeight = float(1.0).sub(abs(ribbonT.sub(0.5).mul(2.0))).clamp(0.0, 1.0);
+          const lowReact = appearanceAudioLow.mul(isLarge);
+          const midReact = appearanceAudioMid.mul(midWeight);
+          const highReact = appearanceAudioHigh.mul(isSmall);
+          const audioBright = lowReact
+            .mul(0.34)
+            .add(midReact.mul(0.28))
+            .add(highReact.mul(0.22))
+            .mul(appearanceRecording);
+
+          const sparkleBright = sparkleIntensity.element(particleIndex);
+          const finalBright = float(0.42)
+            .add(twinkleBright)
+            .add(sparkleBright)
+            .add(audioBright)
+            .clamp(0.1, 2.35);
+
+          particleColors.element(particleIndex).w.assign(finalBright);
+        });
+      });
+    })().compute(slotParticles).label('Update Static Appearance');
+  }
 
   const updateParticles = Fn(() => {
     const position = particlePositions.element(instanceIndex).xyz;
@@ -502,19 +585,31 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     const life = particlePositions.toAttribute().w;
     const reveal = particleProperties.toAttribute().w;
     const liveBrightness = colorBrightness.mul(0.65).add(0.35);
-
-    return particleColors.toAttribute().xyz
+    const color = particleColors.toAttribute().xyz
       .mul(life)
       .mul(reveal)
       .mul(liveBrightness);
+
+    if (staticTwinkle) {
+      return color.mul(particleColors.toAttribute().w);
+    }
+
+    return color;
   })();
 
   particleMaterial.opacityNode = Fn(() => {
     const circle = step(uv().xy.sub(0.5).length(), 0.5);
     const life = particlePositions.toAttribute().w;
     const reveal = particleProperties.toAttribute().w;
+    const opacity = circle.mul(life).mul(reveal);
 
-    return circle.mul(life).mul(reveal);
+    if (staticTwinkle) {
+      const appearance = particleColors.toAttribute().w;
+      const opacityBoost = appearance.mul(0.5).add(0.5).clamp(0.38, 1.0);
+      return opacity.mul(opacityBoost);
+    }
+
+    return opacity;
   })();
 
   const particleMesh = new THREE.InstancedMesh(particleGeom, particleMaterial, nbParticles);
@@ -722,6 +817,54 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     renderer.compute(fadeTrailSlot);
   }
 
+  function setStaticParticleMeta(particleIndex, phase, speed, strength, ribbonT) {
+    if (!staticTwinkle || !appearanceData) return;
+
+    const offset = particleIndex * 4;
+    appearanceData[offset] = phase;
+    appearanceData[offset + 1] = speed;
+    appearanceData[offset + 2] = strength;
+    appearanceData[offset + 3] = ribbonT;
+  }
+
+  function commitStaticParticleMeta() {
+    if (!staticTwinkle || !particleAppearanceAttr) return;
+    particleAppearanceAttr.needsUpdate = true;
+  }
+
+  function clearSparkleIntensities() {
+    if (!staticTwinkle || !sparkleIntensityData) return;
+    sparkleIntensityData.fill(0);
+    sparkleIntensityAttr.needsUpdate = true;
+  }
+
+  function addSparkleIntensity(particleIndex, intensity) {
+    if (!staticTwinkle || !sparkleIntensityData) return;
+    sparkleIntensityData[particleIndex] = Math.max(
+      sparkleIntensityData[particleIndex],
+      intensity
+    );
+    sparkleIntensityAttr.needsUpdate = true;
+  }
+
+  function freezeStaticParticles(trail) {
+    if (!staticTwinkle || !freezeStaticSlot) return;
+    currentTrailParticleStart.value = trail.particleStart;
+    renderer.compute(freezeStaticSlot);
+  }
+
+  function applyStaticAppearance(trail, timeSec, { low = 0, mid = 0, high = 0, recording = 0 } = {}) {
+    if (!staticTwinkle || !updateStaticAppearance) return;
+
+    currentTrailParticleStart.value = trail.particleStart;
+    appearanceTime.value = timeSec;
+    appearanceAudioLow.value = low;
+    appearanceAudioMid.value = mid;
+    appearanceAudioHigh.value = high;
+    appearanceRecording.value = recording;
+    renderer.compute(updateStaticAppearance);
+  }
+
   return {
     particleMesh,
     updateParticles,
@@ -731,6 +874,12 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     applyTrailToGPU,
     updateAudioDrivenPosition,
     tickTrail,
+    setStaticParticleMeta,
+    commitStaticParticleMeta,
+    clearSparkleIntensities,
+    addSparkleIntensity,
+    freezeStaticParticles,
+    applyStaticAppearance,
     uniforms: {
       nbToSpawn,
       colorBrightness,

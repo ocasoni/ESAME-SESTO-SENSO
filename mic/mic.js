@@ -16,6 +16,17 @@ const actionBtn = document.getElementById('mic-action');
 const canvasEl = document.getElementById('mic-canvas');
 const landingTextEl = document.getElementById('mic-landing-text');
 
+function lockPageScroll() {
+  const blockScroll = (event) => {
+    event.preventDefault();
+  };
+
+  document.addEventListener('touchmove', blockScroll, { passive: false });
+  document.addEventListener('wheel', blockScroll, { passive: false });
+}
+
+lockPageScroll();
+
 const COPY = {
   idle: {
     message:
@@ -94,13 +105,21 @@ function hideLandingText() {
   landingTextEl?.classList.remove('is-visible', 'is-fading');
 }
 
-const HOME_FADE_MS = 900;
+function prepareHomeReveal() {
+  canvasEl.classList.add('is-reveal-pending');
+  canvasEl.classList.remove('is-revealing');
+}
 
 function showUi() {
   hideLandingText();
-  uiEl.classList.add('is-visible');
   uiEl.classList.remove('is-landing');
-  trailRenderer?.fadeInHome(HOME_FADE_MS);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      uiEl.classList.add('is-visible');
+      canvasEl.classList.add('is-revealing');
+    });
+  });
 }
 
 function setProgress(ratio) {
@@ -367,6 +386,7 @@ async function boot() {
 
   if (ready) {
     await trailRenderer.runLanding();
+    prepareHomeReveal();
     const homePalette = await fetchNextPaletteIndex();
     await trailRenderer.startHome(homePalette);
   }
