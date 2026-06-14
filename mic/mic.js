@@ -15,7 +15,7 @@ const canvasEl = document.getElementById('mic-canvas');
 const COPY = {
   idle: {
     message:
-      'Respira vicino al microfono del telefono.\nQuando sentirai una vibrazione,\nla registrazione sarà completa.',
+      'Respira vicino al microfono del telefono',
     action: 'registra il tuo respiro',
   },
   recording: {
@@ -23,7 +23,7 @@ const COPY = {
     action: 'respira…',
   },
   uploading: {
-    message: 'Il tuo respiro prende forma…',
+    message: 'Attendi che l tuo respiro prenda forma…',
     action: 'inviato',
   },
   sent: {
