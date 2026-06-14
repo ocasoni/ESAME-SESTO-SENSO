@@ -26,6 +26,51 @@ body {
   height: 100%;
 }
 
+.mic-landing {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0 24px calc(36px + env(safe-area-inset-bottom, 0px));
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 1.35s ease;
+}
+
+.mic-landing.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.mic-landing-copy {
+  margin: 0;
+  max-width: 320px;
+  text-align: center;
+  font-size: 0.92rem;
+  line-height: 1.35;
+  color: #fff;
+  animation: mic-landing-pulse 2.1s ease-in-out infinite;
+}
+
+.mic-landing.is-dissolving .mic-landing-copy {
+  animation: none;
+  transition: opacity 1.35s ease;
+  opacity: 0;
+}
+
+@keyframes mic-landing-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.22;
+  }
+}
+
 .mic-ui {
   position: relative;
   z-index: 1;
@@ -35,12 +80,14 @@ body {
   justify-content: flex-start;
   padding: 28px 24px 36px;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.9s ease;
+  transition: opacity 0.9s ease, visibility 0.9s ease;
 }
 
 .mic-ui.is-visible {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 

@@ -8,6 +8,7 @@ const TRAIL_POLL_MS = 1200;
 const POST_UPLOAD_COMPLETE_MS = 20000;
 
 const uiEl = document.getElementById('mic-ui');
+const landingEl = document.getElementById('mic-landing');
 const messageEl = document.getElementById('mic-message');
 const progressEl = document.getElementById('mic-progress');
 const actionBtn = document.getElementById('mic-action');
@@ -105,6 +106,38 @@ function setState(nextState) {
 
 function showUi() {
   uiEl.classList.add('is-visible');
+}
+
+function hideLanding() {
+  landingEl.classList.add('is-hidden');
+  landingEl.setAttribute('aria-hidden', 'true');
+}
+
+function startLandingDissolve() {
+  landingEl.classList.add('is-dissolving');
+}
+
+async function playLandingIntro() {
+  if (!trailRenderer) {
+    hideLanding();
+    return;
+  }
+
+  await new Promise((resolve) => {
+    const landing = trailRenderer.playLanding(resolve);
+
+    const pollDissolve = () => {
+      if (landing.dissolveStarted) {
+        startLandingDissolve();
+        return;
+      }
+      requestAnimationFrame(pollDissolve);
+    };
+
+    pollDissolve();
+  });
+
+  hideLanding();
 }
 
 function setProgress(ratio) {
@@ -361,8 +394,10 @@ actionBtn.addEventListener('click', () => {
 
 async function boot() {
   setState('boot');
+  uiEl.classList.remove('is-visible');
 
   let rendererReady = false;
+  const apiPromise = ensureApiConfigured();
 
   try {
     trailRenderer = createMicTrailRenderer(canvasEl);
@@ -370,12 +405,15 @@ async function boot() {
 
     if (rendererReady) {
       await refreshHomePalette();
-      trailRenderer.showStaticDecor(currentPositionIndex);
+      await playLandingIntro();
+    } else {
+      hideLanding();
     }
   } catch (error) {
     console.error('Errore avvio mic:', error);
+    hideLanding();
   } finally {
-    const apiOk = await ensureApiConfigured();
+    const apiOk = await apiPromise;
     if (apiOk) {
       setState('idle');
       trailRenderer?.setScreenLayout();
