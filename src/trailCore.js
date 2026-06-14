@@ -197,14 +197,59 @@ export function getLoopedBreathFrame(trail, delta) {
   return { level: 0, lowBand: 0, midBand: 0, highBand: 0 };
 }
 
-export function buildLandingPathPoints() {
+// Traiettoria landing ricavata dal video di riferimento (frame-diff + compensazione rotazione).
+export function buildLandingPathKeyframes() {
   return [
-    new THREE.Vector3(0.55, 10.2, 0),
-    new THREE.Vector3(0.28, 5.8, 0),
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(-0.28, -5.8, 0),
-    new THREE.Vector3(-0.55, -10.2, 0),
+    { t: 0.1, pos: new THREE.Vector3(4.6, 4.04, -0.1) },
+    { t: 0.39, pos: new THREE.Vector3(2.67, 2.77, -0.22) },
+    { t: 0.69, pos: new THREE.Vector3(-2.32, 3.11, 0.34) },
+    { t: 0.98, pos: new THREE.Vector3(-2.97, 4.04, 0.62) },
+    { t: 1.28, pos: new THREE.Vector3(-3.02, 3.49, 0.83) },
+    { t: 1.57, pos: new THREE.Vector3(-2.75, 2.79, 0.94) },
+    { t: 1.86, pos: new THREE.Vector3(-2.61, 2.19, 1.07) },
+    { t: 2.16, pos: new THREE.Vector3(-2.31, 1.96, 1.12) },
+    { t: 2.45, pos: new THREE.Vector3(-1.9, 5.38, 1.07) },
+    { t: 2.75, pos: new THREE.Vector3(-0.06, 5.51, 0.04) },
+    { t: 3.04, pos: new THREE.Vector3(0.24, 4.08, -0.18) },
+    { t: 3.34, pos: new THREE.Vector3(0.28, 2.83, -0.23) },
+    { t: 3.63, pos: new THREE.Vector3(0, 0.7, 0) },
+    { t: 3.92, pos: new THREE.Vector3(-0.01, -1.91, 0.01) },
+    { t: 4.22, pos: new THREE.Vector3(-0.73, -3.68, 0.9) },
+    { t: 4.51, pos: new THREE.Vector3(-1.59, -4.83, 2.2) },
+    { t: 4.81, pos: new THREE.Vector3(-1.6, -2.96, 2.53) },
+    { t: 5.0, pos: new THREE.Vector3(-0.88, -0.43, 1.53) },
+    { t: 5.15, pos: new THREE.Vector3(-0.23, 2.13, 0.43) },
   ];
+}
+
+export function buildLandingPathPoints() {
+  return buildLandingPathKeyframes().map((keyframe) => keyframe.pos.clone());
+}
+
+function catmullRomPoint(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+
+  return new THREE.Vector3(
+    0.5 * (
+      (2 * p1.x) +
+      (-p0.x + p2.x) * t +
+      (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+      (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
+    ),
+    0.5 * (
+      (2 * p1.y) +
+      (-p0.y + p2.y) * t +
+      (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+      (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
+    ),
+    0.5 * (
+      (2 * p1.z) +
+      (-p0.z + p2.z) * t +
+      (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 +
+      (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3
+    )
+  );
 }
 
 function samplePathPoints(points, t) {
@@ -214,6 +259,44 @@ function samplePathPoints(points, t) {
   const index = Math.min(Math.floor(scaled), segments - 1);
   const localT = scaled - index;
   return points[index].clone().lerp(points[index + 1], localT);
+}
+
+function sampleLandingPathKeyframes(keyframes, elapsedSec) {
+  if (!keyframes?.length) {
+    return new THREE.Vector3();
+  }
+
+  if (keyframes.length === 1 || elapsedSec <= keyframes[0].t) {
+    return keyframes[0].pos.clone();
+  }
+
+  const lastKeyframe = keyframes[keyframes.length - 1];
+  if (elapsedSec >= lastKeyframe.t) {
+    return lastKeyframe.pos.clone();
+  }
+
+  let segmentIndex = 0;
+  while (
+    segmentIndex < keyframes.length - 2 &&
+    keyframes[segmentIndex + 1].t < elapsedSec
+  ) {
+    segmentIndex += 1;
+  }
+
+  const start = keyframes[segmentIndex];
+  const end = keyframes[segmentIndex + 1];
+  const localT = THREE.MathUtils.clamp(
+    (elapsedSec - start.t) / Math.max(0.0001, end.t - start.t),
+    0,
+    1
+  );
+
+  const p0 = keyframes[Math.max(0, segmentIndex - 1)].pos;
+  const p1 = start.pos;
+  const p2 = end.pos;
+  const p3 = keyframes[Math.min(keyframes.length - 1, segmentIndex + 2)].pos;
+
+  return catmullRomPoint(p0, p1, p2, p3, localT);
 }
 
 function landingBreathFrame(t) {
@@ -634,16 +717,21 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   function updateAudioDrivenPosition(trail, delta, audioStarted = true) {
     if (!audioStarted) return;
 
-    if (trail.mode === 'path' && trail.pathPoints?.length > 1) {
+    if (trail.mode === 'path' && (trail.pathKeyframes?.length || trail.pathPoints?.length > 1)) {
       trail.pathElapsed = (trail.pathElapsed ?? 0) + delta;
       const duration = trail.pathDuration ?? 5.2;
-      const linearT = THREE.MathUtils.clamp(trail.pathElapsed / duration, 0, 1);
-      const easedT = linearT * linearT * (3 - 2 * linearT);
-      const nextPosition = samplePathPoints(trail.pathPoints, easedT);
-      const aheadPosition = samplePathPoints(
-        trail.pathPoints,
-        THREE.MathUtils.clamp(easedT + 0.01, 0, 1)
+      const elapsed = THREE.MathUtils.clamp(trail.pathElapsed, 0, duration);
+      const progress = elapsed / duration;
+      const samplePath = (timeSec) => (
+        trail.pathKeyframes?.length
+          ? sampleLandingPathKeyframes(trail.pathKeyframes, timeSec)
+          : samplePathPoints(
+            trail.pathPoints,
+            THREE.MathUtils.clamp(timeSec / duration, 0, 1)
+          )
       );
+      const nextPosition = samplePath(elapsed);
+      const aheadPosition = samplePath(elapsed + 0.05);
 
       trail.position.copy(nextPosition);
       trail.audioDrivenPosition.copy(nextPosition);
@@ -653,8 +741,8 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
         trail.targetDirection.copy(trail.direction);
       }
 
-      applyBreathAndUniforms(trail, delta, landingBreathFrame(easedT), {
-        fixedPhaseT: easedT,
+      applyBreathAndUniforms(trail, delta, landingBreathFrame(progress), {
+        fixedPhaseT: progress,
         lockBrightness: true,
       });
       return;
@@ -818,11 +906,13 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 }
 
 export function createLandingTrail() {
-  const pathPoints = buildLandingPathPoints();
-  const startPosition = pathPoints[0].clone();
+  const pathKeyframes = buildLandingPathKeyframes();
+  const pathPoints = pathKeyframes.map((keyframe) => keyframe.pos);
+  const startPosition = sampleLandingPathKeyframes(pathKeyframes, 0).clone();
 
   const trail = createTrail(0, 0, 0);
   trail.mode = 'path';
+  trail.pathKeyframes = pathKeyframes;
   trail.pathPoints = pathPoints;
   trail.pathDuration = 5.2;
   trail.pathElapsed = 0;
@@ -833,7 +923,8 @@ export function createLandingTrail() {
   trail.previousSpawnPosition.copy(startPosition);
   trail.audioDrivenPosition.copy(startPosition);
 
-  const tangent = pathPoints[1].clone().sub(pathPoints[0]);
+  const aheadPosition = sampleLandingPathKeyframes(pathKeyframes, 0.05);
+  const tangent = aheadPosition.sub(startPosition);
   if (tangent.lengthSq() > 0.000001) {
     tangent.normalize();
     trail.direction.copy(tangent);
