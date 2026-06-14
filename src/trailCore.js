@@ -753,8 +753,9 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 }
 
 export function createLandingTrail() {
-  const startPosition = new THREE.Vector3(6, 4.5, 0);
-  const direction = new THREE.Vector3(-0.85, -0.52, 0.08).normalize();
+  const centerAnchor = new THREE.Vector3(0, 0, 0);
+  const entryPosition = new THREE.Vector3(3.6, 7.4, 0);
+  const direction = new THREE.Vector3(-0.4, -0.92, 0.04).normalize();
 
   const trail = createTrail(0, 0, 0);
   trail.mode = 'loop';
@@ -762,15 +763,16 @@ export function createLandingTrail() {
   trail.loopElapsed = 0;
   trail.loopFrames = buildSplashLoopFrames(5, 60);
 
-  trail.homePosition.copy(startPosition);
-  trail.position.copy(startPosition);
-  trail.spawnPosition.copy(startPosition);
-  trail.previousSpawnPosition.copy(startPosition);
-  trail.audioDrivenPosition.copy(startPosition);
+  trail.homePosition.copy(centerAnchor);
+  trail.position.copy(entryPosition);
+  trail.spawnPosition.copy(entryPosition);
+  trail.previousSpawnPosition.copy(entryPosition);
+  trail.audioDrivenPosition.copy(entryPosition);
   trail.direction.copy(direction);
   trail.targetDirection.copy(direction);
-  trail.speedMultiplier = 2.6;
-  trail.maxRange = 14;
+  trail.wanderPhase = 0.65;
+  trail.speedMultiplier = 2.85;
+  trail.maxRange = 18;
 
   return trail;
 }
