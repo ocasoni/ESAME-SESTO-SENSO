@@ -24,14 +24,72 @@ const MIC_SETTINGS = {
   highSensitivity: 7.0,
 };
 
-const MIC_CLUSTERS = [
-  { nx: 0.78, ny: 0.1, spawns: 8 },
-  { nx: 0.9, ny: 0.38, spawns: 9 },
-  { nx: 0.86, ny: 0.55, spawns: 7 },
-  { nx: 0.1, ny: 0.86, spawns: 14 },
-  { nx: 0.32, ny: 0.72, spawns: 11 },
-  { nx: 0.52, ny: 0.9, spawns: 9 },
+const MIC_RIBBONS = [
+  {
+    // fascia bassa che attraversa il fondo
+    p0: { nx: -0.12, ny: 0.9 },
+    p1: { nx: 0.28, ny: 0.96 },
+    p2: { nx: 0.72, ny: 0.88 },
+    p3: { nx: 1.14, ny: 0.94 },
+    steps: 90,
+    breathOffset: 0.8,
+  },
+  {
+    // angolo basso-sinistra → sale verso centro-basso
+    p0: { nx: -0.1, ny: 1.06 },
+    p1: { nx: 0.04, ny: 0.82 },
+    p2: { nx: 0.2, ny: 0.66 },
+    p3: { nx: 0.4, ny: 0.58 },
+    steps: 75,
+    breathOffset: 1.2,
+  },
+  {
+    // alto-destra, parzialmente fuori schermo
+    p0: { nx: 0.68, ny: -0.06 },
+    p1: { nx: 0.92, ny: 0.1 },
+    p2: { nx: 1.1, ny: 0.26 },
+    p3: { nx: 1.04, ny: 0.44 },
+    steps: 65,
+    breathOffset: 1.5,
+  },
 ];
+
+function cubicBezierNorm(t, p0, p1, p2, p3) {
+  const u = 1 - t;
+  const tt = t * t;
+  const uu = u * u;
+  const uuu = uu * u;
+  const ttt = tt * t;
+
+  return {
+    nx: uuu * p0.nx + 3 * uu * t * p1.nx + 3 * u * tt * p2.nx + ttt * p3.nx,
+    ny: uuu * p0.ny + 3 * uu * t * p1.ny + 3 * u * tt * p2.ny + ttt * p3.ny,
+  };
+}
+
+function spawnRibbonAlongBezier(trail, ribbon, camera, engine) {
+  const { p0, p1, p2, p3, steps, breathOffset } = ribbon;
+  const anchor = trail.position.clone();
+
+  for (let i = 0; i < steps; i += 1) {
+    const t0 = i / steps;
+    const t1 = (i + 1) / steps;
+    const a = cubicBezierNorm(t0, p0, p1, p2, p3);
+    const b = cubicBezierNorm(t1, p0, p1, p2, p3);
+    const prev = screenNormToWorld(a.nx, a.ny, camera);
+    const curr = screenNormToWorld(b.nx, b.ny, camera);
+
+    trail.loopElapsed = breathOffset + t1 * 1.6;
+    engine.updateAudioDrivenPosition(trail, 0, true);
+    trail.position.copy(anchor);
+
+    trail.previousSpawnPosition.copy(prev);
+    trail.spawnPosition.copy(curr);
+    trail.audioDrivenPosition.copy(curr);
+    engine.applyTrailToGPU(trail);
+    engine.tickTrail(trail, 0.016, { spawn: true, audioStarted: false });
+  }
+}
 
 function screenNormToWorld(nx, ny, camera) {
   const ndc = new THREE.Vector3(nx * 2 - 1, -(ny * 2 - 1), 0.5);
@@ -247,17 +305,8 @@ export function createMicTrailRenderer(container) {
     paletteIndex = positionIndex;
     targetPaletteIndex = positionIndex;
 
-    for (const cluster of MIC_CLUSTERS) {
-      const center = screenNormToWorld(cluster.nx, cluster.ny, camera);
-      trail.spawnPosition.copy(center);
-      trail.previousSpawnPosition.copy(center);
-      trail.audioDrivenPosition.copy(center);
-      trail.position.copy(center);
-      engine.applyTrailToGPU(trail);
-
-      for (let i = 0; i < cluster.spawns; i += 1) {
-        engine.tickTrail(trail, 0.016, { spawn: true, audioStarted: false });
-      }
+    for (const ribbon of MIC_RIBBONS) {
+      spawnRibbonAlongBezier(trail, ribbon, camera, engine);
     }
 
     staticReady = true;
