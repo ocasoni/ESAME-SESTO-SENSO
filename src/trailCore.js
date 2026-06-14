@@ -197,31 +197,36 @@ export function getLoopedBreathFrame(trail, delta) {
   return { level: 0, lowBand: 0, midBand: 0, highBand: 0 };
 }
 
-// Traiettoria landing: entra/esce dallo schermo più volte (coordinate schermo oltre 0–1).
+// Traiettoria landing: movimenti ampi con uscite/rientri fuori schermo.
 export function buildLandingPathKeyframes() {
   return [
-    { t: 0.0, pos: new THREE.Vector3(6.68, 9.57, 0) },
-    { t: 0.22, pos: new THREE.Vector3(3.73, 7.66, -0.17) },
-    { t: 0.48, pos: new THREE.Vector3(-0.78, 5.96, 0.08) },
-    { t: 0.72, pos: new THREE.Vector3(-5.82, 6.38, 0.88) },
-    { t: 0.95, pos: new THREE.Vector3(-6.35, 3.4, 1.28) },
-    { t: 1.18, pos: new THREE.Vector3(-4.28, 2.13, 1.08) },
-    { t: 1.42, pos: new THREE.Vector3(-1.13, 2.98, 0.35) },
-    { t: 1.68, pos: new THREE.Vector3(2.03, 6.81, -0.74) },
-    { t: 1.95, pos: new THREE.Vector3(5.59, 9.36, -2.42) },
-    { t: 2.18, pos: new THREE.Vector3(4.23, 11.49, -2.08) },
-    { t: 2.42, pos: new THREE.Vector3(0.69, 8.51, -0.38) },
-    { t: 2.68, pos: new THREE.Vector3(0, 2.55, 0) },
-    { t: 2.95, pos: new THREE.Vector3(-0.32, -2.55, 0.23) },
-    { t: 3.22, pos: new THREE.Vector3(-2.45, -8.93, 1.96) },
-    { t: 3.48, pos: new THREE.Vector3(-4.54, -12.34, 4.05) },
-    { t: 3.74, pos: new THREE.Vector3(-2.92, -11.06, 2.91) },
-    { t: 4.0, pos: new THREE.Vector3(0.13, -5.96, -0.15) },
-    { t: 4.28, pos: new THREE.Vector3(1.96, -1.06, -2.45) },
-    { t: 4.55, pos: new THREE.Vector3(3.64, 1.7, -5.12) },
-    { t: 4.78, pos: new THREE.Vector3(0.64, 0.43, -0.99) },
-    { t: 5.05, pos: new THREE.Vector3(-0.24, 2.55, 0.43) },
-    { t: 5.15, pos: new THREE.Vector3(-0.23, 2.55, 0.43) },
+    { t: 0.0, pos: new THREE.Vector3(12.83, 16.92, 0) },
+    { t: 0.2, pos: new THREE.Vector3(7.66, 12.08, -0.32) },
+    { t: 0.42, pos: new THREE.Vector3(0.69, 9.67, -0.06) },
+    { t: 0.62, pos: new THREE.Vector3(-6.22, 10.27, 0.81) },
+    { t: 0.78, pos: new THREE.Vector3(-10.73, 8.46, 1.77) },
+    { t: 0.92, pos: new THREE.Vector3(-12.04, 3.62, 2.35) },
+    { t: 1.08, pos: new THREE.Vector3(-8.42, 0.6, 1.94) },
+    { t: 1.24, pos: new THREE.Vector3(-2.02, 2.42, 0.54) },
+    { t: 1.42, pos: new THREE.Vector3(4.27, 8.46, -1.31) },
+    { t: 1.62, pos: new THREE.Vector3(10.25, 14.5, -3.62) },
+    { t: 1.82, pos: new THREE.Vector3(8.8, 20.54, -3.53) },
+    { t: 2.02, pos: new THREE.Vector3(2.29, 14.5, -1.03) },
+    { t: 2.24, pos: new THREE.Vector3(-0.25, 5.44, 0.13) },
+    { t: 2.46, pos: new THREE.Vector3(-0.97, -2.42, 0.55) },
+    { t: 2.68, pos: new THREE.Vector3(-4.49, -11.48, 2.82) },
+    { t: 2.88, pos: new THREE.Vector3(-9.42, -20.54, 6.49) },
+    { t: 3.08, pos: new THREE.Vector3(-10.25, -24.77, 7.71) },
+    { t: 3.28, pos: new THREE.Vector3(-5.93, -21.75, 4.86) },
+    { t: 3.48, pos: new THREE.Vector3(0.52, -12.69, -0.46) },
+    { t: 3.7, pos: new THREE.Vector3(4.18, -3.62, -4.1) },
+    { t: 3.92, pos: new THREE.Vector3(8.36, 2.42, -8.98) },
+    { t: 4.14, pos: new THREE.Vector3(1.98, 0.6, -2.34) },
+    { t: 4.36, pos: new THREE.Vector3(-1.02, 4.53, 1.32) },
+    { t: 4.58, pos: new THREE.Vector3(5.76, 9.67, -8.22) },
+    { t: 4.78, pos: new THREE.Vector3(-0.15, 3.62, 0.23) },
+    { t: 5.0, pos: new THREE.Vector3(-0.35, 3.62, 0.6) },
+    { t: 5.15, pos: new THREE.Vector3(-0.33, 3.62, 0.61) },
   ];
 }
 
@@ -302,13 +307,26 @@ function sampleLandingPathKeyframes(keyframes, elapsedSec) {
   return catmullRomPoint(p0, p1, p2, p3, localT);
 }
 
-function landingBreathFrame(t) {
+function landingSectionProfile(progress) {
+  const pulseA = Math.sin(progress * Math.PI * 2 * 3.6 + 0.2);
+  const pulseB = Math.sin(progress * Math.PI * 2 * 5.4 + 1.1);
+  const envelope = THREE.MathUtils.clamp(0.5 + pulseA * 0.34 + pulseB * 0.2, 0, 1);
+  const swell = Math.pow(envelope, 1.25);
+  const thin = Math.pow(1 - envelope, 2.5);
+
   return {
-    level: 0.52 + Math.sin(t * Math.PI) * 0.38,
-    lowBand: 0.45 + Math.sin(t * Math.PI * 1.35 + 0.15) * 0.22,
-    midBand: 0.42 + Math.sin(t * Math.PI * 2.15 + 0.45) * 0.25,
-    highBand: 0.38 + Math.sin(t * Math.PI * 3.05 + 0.75) * 0.28,
+    level: 0.08 + swell * 0.86 + thin * 0.04,
+    lowBand: 0.14 + swell * 0.52 + thin * 0.04,
+    midBand: 0.18 + swell * 0.58 + thin * 0.05,
+    highBand: 0.12 + swell * 0.68 + thin * 0.06,
+    sectionScale: 0.2 + swell * 2.35 + thin * 0.05,
+    particleSize: 0.18 + swell * 0.48 + thin * 0.03,
+    spawnMul: 0.28 + swell * 1.05,
   };
+}
+
+function landingBreathFrame(t) {
+  return landingSectionProfile(t);
 }
 
 export async function createTrailEngine(renderer, worldGroup, slotCount = 1, options = {}) {
@@ -678,7 +696,14 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     );
 
     if (options.fixedPhaseT != null) {
-      nbToSpawn.value = 8 + trail.smoothedLevel * 70;
+      const spawnMul = breathFrame.spawnMul ?? 1;
+      nbToSpawn.value = Math.round(5 + trail.smoothedLevel * 78 * spawnMul);
+      if (Number.isFinite(breathFrame.sectionScale)) {
+        cymaticScale.value = breathFrame.sectionScale;
+      }
+      if (Number.isFinite(breathFrame.particleSize)) {
+        particleSize.value = breathFrame.particleSize;
+      }
     } else {
       nbToSpawn.value = THREE.MathUtils.lerp(
         nbToSpawn.value,
@@ -734,7 +759,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
           )
       );
       const nextPosition = samplePath(elapsed);
-      const aheadPosition = samplePath(elapsed + 0.05);
+      const aheadPosition = samplePath(elapsed + 0.08);
 
       trail.position.copy(nextPosition);
       trail.audioDrivenPosition.copy(nextPosition);

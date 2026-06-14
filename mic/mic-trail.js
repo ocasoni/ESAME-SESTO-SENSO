@@ -14,7 +14,7 @@ import {
 
 const CAMERA_FOV = 59;
 const CAMERA_DISTANCE = 20;
-const AUTO_ROTATE_SPEED = 2;
+const AUTO_ROTATE_SPEED = 2.4;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const LANDING_MS = 5200;
 const LANDING_TAIL_MS = 1800;
