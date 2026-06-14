@@ -26,13 +26,38 @@ body {
   height: 100%;
 }
 
+.mic-landing-text {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 28px;
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mic-landing-text.is-visible {
+  animation: mic-landing-blink 2.2s ease-in-out infinite;
+}
+
+@keyframes mic-landing-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
 .mic-ui {
   position: relative;
   z-index: 1;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   padding: 28px 24px 36px;
   opacity: 0;
   pointer-events: none;
@@ -69,11 +94,16 @@ body {
 }
 
 .mic-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 54%;
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 18px;
-  padding-bottom: 8vh;
+  padding: 0 24px;
 }
 
 .mic-message {

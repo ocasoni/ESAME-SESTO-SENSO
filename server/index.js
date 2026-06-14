@@ -134,9 +134,12 @@ app.get('/upload/:id', (req, res) => {
 
 app.get('/trail-preview', (_req, res) => {
   const last = meta.lastTrailAssignment || null;
+  const nextTrailNumber = last ? last.trailNumber + 1 : 0;
+  const nextPositionIndex = last ? (last.positionIndex + 1) % 14 : 0;
 
   res.json({
-    nextTrailNumber: last ? last.trailNumber + 1 : 0,
+    nextTrailNumber,
+    nextPositionIndex,
     lastPositionIndex: last?.positionIndex ?? null,
   });
 });

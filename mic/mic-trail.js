@@ -63,6 +63,10 @@ export function createMicTrailRenderer(container) {
   let staticReady = false;
   let baseBrightness = 1.35;
   let smoothedLevel = 0;
+  let homeFade = 0;
+  let homeFadeTarget = 1;
+  let homeFadeStart = 0;
+  let homeFadeDuration = 900;
 
   function setPalette(index) {
     paletteIndex = index;
@@ -72,7 +76,15 @@ export function createMicTrailRenderer(container) {
     engine?.applyTrailToGPU(trail);
   }
 
+  function currentHomeFade() {
+    if (homeFadeDuration <= 0) return homeFadeTarget;
+    const t = THREE.MathUtils.clamp((performance.now() - homeFadeStart) / homeFadeDuration, 0, 1);
+    return THREE.MathUtils.lerp(homeFade, homeFadeTarget, t);
+  }
+
   function renderStaticFrame(delta, { pulse = false } = {}) {
+    const fade = mode === 'home' || mode === 'uploading' || mode === 'sent' ? currentHomeFade() : 1;
+
     if (pulse && liveAnalyser) {
       const frame = getBreathFrameFromAnalyser(
         liveAnalyser,
@@ -81,11 +93,11 @@ export function createMicTrailRenderer(container) {
         MIC_SETTINGS
       );
       smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, frame.level, 0.18);
-      engine.uniforms.colorBrightness.value = baseBrightness + smoothedLevel * 1.4;
+      engine.uniforms.colorBrightness.value = (baseBrightness + smoothedLevel * 1.4) * fade;
     } else {
       engine.uniforms.colorBrightness.value = THREE.MathUtils.lerp(
         engine.uniforms.colorBrightness.value,
-        baseBrightness,
+        baseBrightness * fade,
         0.08
       );
     }
@@ -249,7 +261,9 @@ export function createMicTrailRenderer(container) {
     }
 
     staticReady = true;
-    engine.uniforms.colorBrightness.value = baseBrightness;
+    homeFade = 0;
+    homeFadeTarget = 0;
+    engine.uniforms.colorBrightness.value = 0;
   }
 
   async function startHome(positionIndex) {
@@ -260,6 +274,26 @@ export function createMicTrailRenderer(container) {
     worldGroup.quaternion.identity();
     await spawnStaticField(positionIndex);
     startLoop();
+  }
+
+  function fadeInHome(durationMs = 900) {
+    homeFade = 0;
+    homeFadeTarget = 1;
+    homeFadeStart = performance.now();
+    homeFadeDuration = durationMs;
+  }
+
+  async function applyAssignedPalette(positionIndex) {
+    if (!engine || mode === 'landing') return;
+
+    const keepFade = homeFadeTarget >= 1 ? currentHomeFade() : homeFade;
+    await spawnStaticField(positionIndex);
+    if (keepFade > 0) {
+      homeFade = keepFade;
+      homeFadeTarget = 1;
+      homeFadeStart = performance.now();
+      homeFadeDuration = 0;
+    }
   }
 
   function startRecording(analyser, frequencyData, waveformData) {
@@ -279,12 +313,8 @@ export function createMicTrailRenderer(container) {
     liveAnalyser = null;
     smoothedLevel = 0;
     if (engine) {
-      engine.uniforms.colorBrightness.value = baseBrightness;
+      engine.uniforms.colorBrightness.value = baseBrightness * currentHomeFade();
     }
-  }
-
-  function applyAssignedPalette(positionIndex) {
-    setPalette(positionIndex);
   }
 
   function dispose() {
@@ -302,6 +332,7 @@ export function createMicTrailRenderer(container) {
     init,
     runLanding,
     startHome,
+    fadeInHome,
     startRecording,
     enterUploadingState,
     applyAssignedPalette,

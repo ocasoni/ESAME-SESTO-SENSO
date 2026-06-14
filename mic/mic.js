@@ -4,13 +4,14 @@ const params = new URLSearchParams(window.location.search);
 const API_URL = (params.get('api') || '').replace(/\/$/, '');
 const UPLOAD_SECRET = params.get('secret') || '';
 const RECORD_SECONDS = 20;
-const SENT_MESSAGE_DELAY_MS = 25000;
+const SENT_MESSAGE_DELAY_MS = 23000;
 
 const uiEl = document.getElementById('mic-ui');
 const messageEl = document.getElementById('mic-message');
 const progressEl = document.getElementById('mic-progress');
 const actionBtn = document.getElementById('mic-action');
 const canvasEl = document.getElementById('mic-canvas');
+const landingTextEl = document.getElementById('mic-landing-text');
 
 const COPY = {
   idle: {
@@ -72,24 +73,38 @@ function setState(nextState) {
   }
 }
 
+function showLandingText() {
+  landingTextEl?.classList.add('is-visible');
+}
+
+function hideLandingText() {
+  landingTextEl?.classList.remove('is-visible');
+}
+
 function showUi() {
+  hideLandingText();
   uiEl.classList.add('is-visible');
   uiEl.classList.remove('is-landing');
+  trailRenderer?.fadeInHome(900);
 }
 
 function setProgress(ratio) {
   progressEl.style.width = `${Math.min(100, Math.max(0, ratio * 100))}%`;
 }
 
-async function fetchHomePaletteIndex() {
+async function fetchNextPaletteIndex() {
   if (!API_URL) return 0;
 
   try {
     const response = await fetch(`${API_URL}/trail-preview`);
     if (!response.ok) return 0;
     const data = await response.json();
+    if (Number.isFinite(data.nextPositionIndex)) return data.nextPositionIndex;
     if (data.nextTrailNumber === 0) return 0;
-    return Number.isFinite(data.lastPositionIndex) ? data.lastPositionIndex : 0;
+    if (Number.isFinite(data.lastPositionIndex)) {
+      return (data.lastPositionIndex + 1) % 14;
+    }
+    return 0;
   } catch {
     return 0;
   }
@@ -181,6 +196,9 @@ async function startRecording() {
   if (state === 'recording' || state === 'uploading' || !API_URL) return;
 
   clearUploadTimers();
+
+  const nextPalette = await fetchNextPaletteIndex();
+  trailRenderer?.applyAssignedPalette(nextPalette);
 
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -326,6 +344,7 @@ actionBtn.addEventListener('click', () => {
 async function boot() {
   setState('boot');
   uiEl.classList.add('is-landing');
+  showLandingText();
   clearUploadTimers();
 
   trailRenderer = createMicTrailRenderer(canvasEl);
@@ -333,7 +352,7 @@ async function boot() {
 
   if (ready) {
     await trailRenderer.runLanding();
-    const homePalette = await fetchHomePaletteIndex();
+    const homePalette = await fetchNextPaletteIndex();
     await trailRenderer.startHome(homePalette);
   }
 
