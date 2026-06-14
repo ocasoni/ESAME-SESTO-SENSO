@@ -11,6 +11,7 @@ import {
   If,
   instanceIndex,
   max,
+  min,
   mix,
   mx_fractal_noise_vec3,
   PI,
@@ -347,7 +348,6 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 
   let freezeStaticSlot = null;
   let updateStaticAppearance = null;
-  let spawnStaticParticles = null;
 
   if (staticTwinkle) {
     freezeStaticSlot = Fn(() => {
@@ -370,24 +370,36 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 
       If(life.greaterThan(0.0), () => {
         If(frozen.greaterThan(0.5), () => {
+          particleColors.element(particleIndex).xyz.assign(getInstanceColor(particleIndex));
+
           const meta = particleAppearance.element(particleIndex);
           const phase = meta.x;
           const speed = meta.y;
           const strength = meta.z;
           const ribbonT = meta.w;
 
-          const seedA = hash(particleIndex.toFloat());
-          const seedB = hash(particleIndex.add(31));
-          const colorMixA = mix(currentTrailColorA, currentTrailColorB, seedA);
-          const colorMixB = mix(colorMixA, currentTrailColorC, seedB.mul(0.45));
-          particleColors.element(particleIndex).xyz.assign(colorMixB);
-
           const sizeSeed = hash(particleIndex.toFloat());
           const isSmall = step(sizeSeed, 0.52);
           const isLarge = step(0.72, sizeSeed);
 
-          const tw = sin(appearanceTime.mul(speed).add(phase)).mul(0.5).add(0.5);
-          const twinkleBright = tw.mul(strength).mul(1.75);
+          const twSlow = sin(appearanceTime.mul(speed).add(phase)).mul(0.5).add(0.5);
+          const twMid = sin(appearanceTime.mul(speed.mul(1.85)).add(phase.mul(1.41)))
+            .mul(0.5)
+            .add(0.5);
+          const twinkleBright = twSlow.mul(strength).add(twMid.mul(strength.mul(0.55)));
+
+          const bucketDur = float(0.68);
+          const bucket = floor(appearanceTime.div(bucketDur));
+          const localT = appearanceTime.sub(bucket.mul(bucketDur)).div(bucketDur);
+          const sparklePick = hash(particleIndex.add(bucket.mul(113)));
+          const isSparkle = step(float(0.962), sparklePick);
+          const attack = localT.div(0.11).clamp(0.0, 1.0);
+          const release = float(1.0).sub(localT.sub(0.11).div(0.89).clamp(0.0, 1.0));
+          const sparkleEnv = min(attack, release);
+          const sparkleGpu = isSparkle
+            .mul(sparkleEnv)
+            .mul(strength.mul(6.5).add(0.22))
+            .mul(float(1.0).sub(appearanceRecording));
 
           const midWeight = float(1.0).sub(abs(ribbonT.sub(0.5).mul(2.0))).clamp(0.0, 1.0);
           const lowReact = appearanceAudioLow.mul(isLarge);
@@ -399,60 +411,17 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
             .add(highReact.mul(0.22))
             .mul(appearanceRecording);
 
-          const sparkleRare = step(
-            float(0.962),
-            hash(particleIndex.add(floor(appearanceTime.mul(0.28))))
-          );
-          const sparklePulse = sin(appearanceTime.mul(speed.mul(2.4)).add(phase.mul(1.7)))
-            .mul(0.5)
-            .add(0.5);
-          const gpuSparkle = sparkleRare
-            .mul(sparklePulse)
-            .mul(float(0.5))
-            .mul(float(1.0).sub(appearanceRecording));
-
-          const sparkleBright = sparkleIntensity.element(particleIndex).add(gpuSparkle);
-          const finalBright = float(0.52)
-            .add(twinkleBright)
+          const sparkleBright = sparkleIntensity.element(particleIndex).add(sparkleGpu);
+          const finalBright = float(0.34)
+            .add(twinkleBright.mul(2.2))
             .add(sparkleBright)
             .add(audioBright)
-            .clamp(0.12, 2.8);
+            .clamp(0.12, 3.0);
 
           particleColors.element(particleIndex).w.assign(finalBright);
         });
       });
     })().compute(slotParticles).label('Update Static Appearance');
-
-    spawnStaticParticles = Fn(() => {
-      const particleIndex = currentTrailParticleStart
-        .add(spawnIndex.add(instanceIndex).mod(slotParticles).toInt())
-        .toInt();
-      const position = particlePositions.element(particleIndex).xyz;
-      const life = particlePositions.element(particleIndex).w;
-      const velocity = particleVelocities.element(particleIndex).xyz;
-      const particleColor = particleColors.element(particleIndex);
-      const particleProperty = particleProperties.element(particleIndex);
-
-      const pos = mix(
-        previousSpawnPosition,
-        spawnPosition,
-        instanceIndex.toFloat().div(nbToSpawn.sub(1).toFloat()).clamp()
-      );
-
-      life.assign(0.9);
-      position.assign(pos);
-      velocity.assign(pos);
-
-      particleColor.xyz.assign(getInstanceColor(particleIndex));
-      particleColor.w.assign(1.0);
-
-      const sizeSeed = hash(particleIndex);
-      const variedSize = particleSize.mul(sizeSeed.mul(0.5).add(0.75));
-      particleProperty.x.assign(variedSize);
-      particleProperty.y.assign(spawnLinksWidth);
-      particleProperty.z.assign(1.0);
-      particleProperty.w.assign(1.0);
-    })().compute(nbToSpawn.value).label('Spawn Static Particles');
   }
 
   const updateParticles = Fn(() => {
@@ -655,7 +624,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 
     if (staticTwinkle) {
       const appearance = particleColors.toAttribute().w;
-      const opacityBoost = appearance.mul(0.72).add(0.28).clamp(0.28, 1.0);
+      const opacityBoost = appearance.mul(0.72).add(0.28).clamp(0.22, 1.0);
       return opacity.mul(opacityBoost);
     }
 
@@ -882,21 +851,13 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     particleAppearanceAttr.needsUpdate = true;
   }
 
-  function clearSparkleIntensities() {
+  function setSparkleIntensities(entries) {
     if (!staticTwinkle || !sparkleIntensityData) return;
+
     sparkleIntensityData.fill(0);
-  }
-
-  function addSparkleIntensity(particleIndex, intensity) {
-    if (!staticTwinkle || !sparkleIntensityData) return;
-    sparkleIntensityData[particleIndex] = Math.max(
-      sparkleIntensityData[particleIndex],
-      intensity
-    );
-  }
-
-  function commitSparkleIntensities() {
-    if (!staticTwinkle || !sparkleIntensityAttr) return;
+    for (const [particleIndex, intensity] of entries) {
+      sparkleIntensityData[particleIndex] = intensity;
+    }
     sparkleIntensityAttr.needsUpdate = true;
   }
 
@@ -918,20 +879,6 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     renderer.compute(updateStaticAppearance);
   }
 
-  function spawnStaticSegment(trail, previousPos, currentPos, count) {
-    if (!staticTwinkle || !spawnStaticParticles) return 0;
-
-    const spawnCount = Math.max(1, Math.round(count));
-    applyTrailToGPU(trail);
-    nbToSpawn.value = spawnCount;
-    spawnIndex.value = trail.spawnIndex;
-    previousSpawnPosition.value.copy(previousPos);
-    spawnPosition.value.copy(currentPos);
-    renderer.compute(spawnStaticParticles);
-    trail.spawnIndex = (trail.spawnIndex + spawnCount) % slotParticles;
-    return spawnCount;
-  }
-
   return {
     particleMesh,
     updateParticles,
@@ -943,12 +890,9 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     tickTrail,
     setStaticParticleMeta,
     commitStaticParticleMeta,
-    clearSparkleIntensities,
-    addSparkleIntensity,
-    commitSparkleIntensities,
+    setSparkleIntensities,
     freezeStaticParticles,
     applyStaticAppearance,
-    spawnStaticSegment,
     uniforms: {
       nbToSpawn,
       colorBrightness,
