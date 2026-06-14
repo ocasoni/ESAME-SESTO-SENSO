@@ -4,12 +4,14 @@ const params = new URLSearchParams(window.location.search);
 const API_URL = (params.get('api') || '').replace(/\/$/, '');
 const UPLOAD_SECRET = params.get('secret') || '';
 const RECORD_SECONDS = 20;
+const TRAIL_POLL_MS = 1200;
 
 const uiEl = document.getElementById('mic-ui');
 const messageEl = document.getElementById('mic-message');
 const progressEl = document.getElementById('mic-progress');
 const actionBtn = document.getElementById('mic-action');
 const canvasEl = document.getElementById('mic-canvas');
+const landingCaptionEl = document.getElementById('mic-landing-caption');
 
 const COPY = {
   idle: {
@@ -21,11 +23,15 @@ const COPY = {
     message: '',
     action: 'respira…',
   },
-  uploading: {
+  waiting: {
     message: 'Il tuo respiro prende forma…',
     action: 'inviato',
   },
-  sent: {
+  generating: {
+    message: "L'eco del tuo respiro è ora traccia visibile",
+    action: 'inviato',
+  },
+  complete: {
     message: "L'eco del tuo respiro è ora traccia visibile",
     action: 'registra ancora',
   },
@@ -46,48 +52,110 @@ let chunks = [];
 let recordedBlob = null;
 let progressInterval = null;
 let recordStartedAt = 0;
-let pendingPositionIndex = 0;
 let trailRenderer = null;
+let trailPollTimer = null;
+let currentPositionIndex = 0;
+let lastUploadId = null;
+let lockedPositionIndex = null;
 
 function setState(nextState) {
   state = nextState;
-  uiEl.classList.remove('is-recording', 'is-uploading', 'is-sent', 'is-error');
+  uiEl.classList.remove('is-recording', 'is-waiting', 'is-generating', 'is-complete', 'is-error');
 
   if (nextState === 'recording') uiEl.classList.add('is-recording');
-  if (nextState === 'uploading') uiEl.classList.add('is-uploading');
-  if (nextState === 'sent') uiEl.classList.add('is-sent');
+  if (nextState === 'waiting') uiEl.classList.add('is-waiting');
+  if (nextState === 'generating') uiEl.classList.add('is-generating');
+  if (nextState === 'complete') uiEl.classList.add('is-complete');
   if (nextState === 'error') uiEl.classList.add('is-error');
 
   const copy = COPY[nextState] || COPY.idle;
   messageEl.textContent = copy.message;
   actionBtn.textContent = copy.action;
-  actionBtn.disabled = nextState === 'boot' || nextState === 'uploading';
+  actionBtn.disabled = nextState === 'boot' || nextState === 'waiting' || nextState === 'generating';
 
-  if (nextState !== 'recording') {
-    progressEl.style.width = nextState === 'uploading' ? '100%' : '0%';
+  if (nextState === 'waiting' || nextState === 'generating') {
+    progressEl.style.width = '100%';
+  } else if (nextState !== 'recording') {
+    progressEl.style.width = '0%';
   }
 }
 
 function showUi() {
   uiEl.classList.add('is-visible');
   uiEl.classList.remove('is-landing');
+  landingCaptionEl?.classList.remove('is-visible');
 }
 
 function setProgress(ratio) {
   progressEl.style.width = `${Math.min(100, Math.max(0, ratio * 100))}%`;
 }
 
-async function resolveNextPositionIndex() {
-  if (!API_URL) return 0;
+async function fetchTrailState() {
+  if (!API_URL) {
+    return {
+      nextPositionIndex: 0,
+      processingUploadId: null,
+      lastCompletedUploadId: null,
+      lastTrailPositionIndex: null,
+    };
+  }
 
   try {
-    const response = await fetch(`${API_URL}/latest?since=0`);
-    if (!response.ok) return 0;
-    const data = await response.json();
-    return (data.latestId + 1) % 14;
+    const response = await fetch(`${API_URL}/trail-state`);
+    if (!response.ok) throw new Error('trail-state unavailable');
+    return response.json();
   } catch {
-    return 0;
+    return {
+      nextPositionIndex: currentPositionIndex,
+      processingUploadId: null,
+      lastCompletedUploadId: null,
+      lastTrailPositionIndex: null,
+    };
   }
+}
+
+async function refreshHomePalette() {
+  const trailState = await fetchTrailState();
+  currentPositionIndex = trailState.nextPositionIndex ?? 0;
+  trailRenderer?.setPalette(currentPositionIndex);
+}
+
+function startTrailPolling() {
+  stopTrailPolling();
+  trailPollTimer = setInterval(async () => {
+    const trailState = await fetchTrailState();
+
+    if (state === 'idle') {
+      currentPositionIndex = trailState.nextPositionIndex ?? currentPositionIndex;
+      trailRenderer?.setPalette(currentPositionIndex);
+    }
+
+    if (state === 'waiting' && lastUploadId != null) {
+      if (trailState.processingUploadId === lastUploadId) {
+        setState('generating');
+        if (Number.isFinite(trailState.lastTrailPositionIndex)) {
+          lockedPositionIndex = trailState.lastTrailPositionIndex;
+          trailRenderer?.setPalette(trailState.lastTrailPositionIndex);
+        }
+      }
+    }
+
+    if (state === 'generating' && lastUploadId != null) {
+      if (Number.isFinite(trailState.lastTrailPositionIndex)) {
+        lockedPositionIndex = trailState.lastTrailPositionIndex;
+        trailRenderer?.setPalette(trailState.lastTrailPositionIndex);
+      }
+
+      if (trailState.lastCompletedUploadId === lastUploadId) {
+        setState('complete');
+      }
+    }
+  }, TRAIL_POLL_MS);
+}
+
+function stopTrailPolling() {
+  clearInterval(trailPollTimer);
+  trailPollTimer = null;
 }
 
 async function ensureApiConfigured() {
@@ -101,32 +169,14 @@ async function ensureApiConfigured() {
   try {
     const response = await fetch(`${API_URL}/health`);
     if (!response.ok) throw new Error('Backend non raggiungibile');
+    await refreshHomePalette();
+    startTrailPolling();
     return true;
   } catch {
     setState('error');
     messageEl.textContent = `Backend non raggiungibile.\nVerifica: ${API_URL}`;
     return false;
   }
-}
-
-function stopMedia() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
-
-  if (mediaStream) {
-    mediaStream.getTracks().forEach((track) => track.stop());
-    mediaStream = null;
-  }
-
-  if (audioContext && audioContext.state !== 'closed') {
-    audioContext.close().catch(() => {});
-  }
-
-  audioContext = null;
-  analyser = null;
-  clearInterval(progressInterval);
-  progressInterval = null;
 }
 
 function vibrateDone() {
@@ -136,9 +186,11 @@ function vibrateDone() {
 }
 
 async function startRecording() {
-  if (state === 'recording' || state === 'uploading' || !API_URL) return;
+  if (state === 'recording' || state === 'waiting' || state === 'generating' || !API_URL) {
+    return;
+  }
 
-  pendingPositionIndex = await resolveNextPositionIndex();
+  await refreshHomePalette();
 
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -167,6 +219,8 @@ async function startRecording() {
 
     chunks = [];
     recordedBlob = null;
+    lastUploadId = null;
+    lockedPositionIndex = null;
 
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
@@ -185,12 +239,7 @@ async function startRecording() {
     setState('recording');
     setProgress(0);
 
-    trailRenderer?.startRecording(
-      analyser,
-      frequencyData,
-      waveformData,
-      pendingPositionIndex
-    );
+    trailRenderer?.startRecording(analyser, frequencyData, waveformData);
 
     progressInterval = setInterval(() => {
       const elapsed = (Date.now() - recordStartedAt) / 1000;
@@ -202,7 +251,15 @@ async function startRecording() {
     }, 100);
   } catch (error) {
     console.error(error);
-    stopMedia();
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((track) => track.stop());
+      mediaStream = null;
+    }
+    if (audioContext && audioContext.state !== 'closed') {
+      audioContext.close().catch(() => {});
+    }
+    audioContext = null;
+    analyser = null;
     setState('error');
     messageEl.textContent = 'Consenti l\'accesso al microfono nelle impostazioni del browser.';
   }
@@ -228,8 +285,15 @@ async function finishRecording() {
     mediaStream = null;
   }
 
-  setState('uploading');
-  trailRenderer?.startUploading(pendingPositionIndex);
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close().catch(() => {});
+  }
+
+  audioContext = null;
+  analyser = null;
+  trailRenderer?.stopRecordingVisual();
+
+  setState('waiting');
   await sendRecording();
 }
 
@@ -241,7 +305,6 @@ async function sendRecording() {
 
   const formData = new FormData();
   formData.append('audio', recordedBlob, `respiro-${Date.now()}.webm`);
-  formData.append('positionIndex', String(pendingPositionIndex));
 
   try {
     const headers = {};
@@ -262,8 +325,12 @@ async function sendRecording() {
     }
 
     recordedBlob = null;
-    setState('sent');
-    trailRenderer?.showSent(pendingPositionIndex);
+    lastUploadId = data.id;
+
+    const trailState = await fetchTrailState();
+    if (trailState.processingUploadId === lastUploadId) {
+      setState('generating');
+    }
   } catch (error) {
     console.error(error);
     setState('error');
@@ -273,7 +340,7 @@ async function sendRecording() {
 }
 
 actionBtn.addEventListener('click', () => {
-  if (state === 'idle' || state === 'sent') {
+  if (state === 'idle' || state === 'complete') {
     startRecording();
     return;
   }
@@ -286,13 +353,15 @@ actionBtn.addEventListener('click', () => {
 async function boot() {
   setState('boot');
   uiEl.classList.add('is-landing');
+  landingCaptionEl?.classList.add('is-visible');
 
   trailRenderer = createMicTrailRenderer(canvasEl);
   const ready = await trailRenderer.init();
 
   if (ready) {
     await trailRenderer.runLanding();
-    trailRenderer.startAmbient();
+    await refreshHomePalette();
+    trailRenderer.showStaticDecor(currentPositionIndex);
   }
 
   const apiOk = await ensureApiConfigured();
@@ -304,3 +373,5 @@ async function boot() {
 }
 
 boot();
+
+window.addEventListener('beforeunload', stopTrailPolling);

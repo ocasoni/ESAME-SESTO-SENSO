@@ -42,6 +42,13 @@ function saveMeta(meta) {
 
 let meta = loadMeta();
 
+let trailState = {
+  nextPositionIndex: 0,
+  processingUploadId: null,
+  lastCompletedUploadId: null,
+  lastTrailPositionIndex: null,
+};
+
 const storage = multer.diskStorage({
   destination: UPLOAD_DIR,
   filename: (_req, file, cb) => {
@@ -85,6 +92,18 @@ app.get('/network-info', (_req, res) => {
     lanIp: getLanIp(),
     port: Number(PORT),
   });
+});
+
+app.get('/trail-state', (_req, res) => {
+  res.json(trailState);
+});
+
+app.post('/trail-state', (req, res) => {
+  trailState = {
+    ...trailState,
+    ...req.body,
+  };
+  res.json({ ok: true, trailState });
 });
 
 app.get('/latest', (req, res) => {

@@ -108,3 +108,10 @@ export function applyMixedPalette(trail, mixed) {
   trail.colorC.copy(mixed.colorC);
   trail.saturation = mixed.saturation;
 }
+
+export function getParticleColor(palette, seed) {
+  const seedA = (seed * 0.6180339887) % 1;
+  const seedB = (seed * 0.4338912758) % 1;
+  const mixAB = palette.colorA.clone().lerp(palette.colorB, seedA);
+  return mixAB.lerp(palette.colorC, seedB * 0.45);
+}

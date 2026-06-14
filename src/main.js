@@ -511,7 +511,7 @@ async function init() {
 
   createPhoneUploadUI();
   unlockAudioPlayback();
-
+  publishTrailState();
 }
 
 function onWindowResize() {
@@ -748,8 +748,37 @@ function unlockAudioPlayback() {
   document.addEventListener('keydown', unlock, { once: true });
 }
 
+function peekNextPositionIndex() {
+  let excludePosition = null;
+
+  if (activeTrails.length >= maxActiveTrails) {
+    excludePosition = activeTrails[0]?.positionIndex ?? null;
+  }
+
+  return allocatePositionIndex(excludePosition);
+}
+
+async function publishTrailState(overrides = {}) {
+  if (!resolvedApiUrl) return;
+
+  try {
+    await fetch(`${resolvedApiUrl}/trail-state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nextPositionIndex: peekNextPositionIndex(),
+        ...overrides,
+      }),
+    });
+  } catch (error) {
+    console.warn('Impossibile pubblicare trail-state:', error);
+  }
+}
+
 async function handleNewPhoneUpload(upload) {
   updatePhoneStatus(`Nuova registrazione #${upload.id}…`, '');
+
+  await publishTrailState({ processingUploadId: upload.id });
 
   try {
     const arrayBuffer = await fetchUploadAudio(resolvedApiUrl, upload.id);
@@ -765,10 +794,12 @@ async function handleNewPhoneUpload(upload) {
 
     simulationPaused = false;
 
-    const { slot, positionIndex: allocatedIndex } = prepareSlotForNewTrail();
-    const positionIndex = Number.isFinite(upload.positionIndex)
-      ? upload.positionIndex
-      : allocatedIndex;
+    const { slot, positionIndex } = prepareSlotForNewTrail();
+
+    await publishTrailState({
+      processingUploadId: upload.id,
+      lastTrailPositionIndex: positionIndex,
+    });
 
     const trail = createTrail(activeTrailNumber, slot, positionIndex);
     activeTrailNumber += 1;
@@ -785,9 +816,16 @@ async function handleNewPhoneUpload(upload) {
 
     await playTrailRecording(audioBuffer);
 
+    await publishTrailState({
+      processingUploadId: null,
+      lastCompletedUploadId: upload.id,
+      lastTrailPositionIndex: positionIndex,
+    });
+
     updatePhoneStatus(`Scia #${upload.id} creata (${upload.originalName || 'audio'})`, 'is-ready');
   } catch (error) {
     console.error(error);
+    await publishTrailState({ processingUploadId: null });
     updatePhoneStatus(`Errore scia #${upload.id}: ${error.message}`, 'is-error');
   }
 }
