@@ -18,7 +18,6 @@ const AUTO_ROTATE_SPEED = 2.4;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const LANDING_MS = 5200;
 const LANDING_TAIL_MS = 1800;
-const LANDING_COLOR_BRIGHTNESS = 1.48;
 
 const MIC_SETTINGS = {
   inputGain: 4.0,
@@ -63,15 +62,15 @@ export function createMicTrailRenderer(container) {
   let renderer = null;
   let scene = null;
   let decorGroup = null;
-  let landingGroup = null;
+  let worldGroup = null;
   let camera = null;
   let clock = null;
   let rafId = 0;
   let loopRunning = false;
   let mode = 'idle';
 
-  let landingEngine = null;
-  let landingTrail = null;
+  let engine = null;
+  let trail = null;
   let landingStartedAt = 0;
   let landingFadeStarted = false;
   let onLandingFadeStart = null;
@@ -174,18 +173,20 @@ export function createMicTrailRenderer(container) {
     writeStaticGeometry();
   }
 
-  function tickLandingFrame(delta, { spawn = true, fade = false } = {}) {
+  function tickFrame(delta, { spawn = true, fade = false } = {}) {
     worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
-    landingGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
+    worldGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
 
     if (fade) {
-      landingEngine.fadeSlot(landingTrail.particleStart, 1.05);
-      renderer.compute(landingEngine.updateParticles);
+      renderer.compute(engine.updateParticles);
+      engine.fadeSlot(trail.particleStart, 1.05);
     } else if (spawn) {
-      landingEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
-      landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
+      engine.tickTrail(trail, delta, {
+        spawn: true,
+        audioStarted: true,
+      });
     } else {
-      renderer.compute(landingEngine.updateParticles);
+      renderer.compute(engine.updateParticles);
     }
 
     renderer.render(scene, camera);
@@ -201,10 +202,11 @@ export function createMicTrailRenderer(container) {
       }
 
       if (elapsed < LANDING_MS) {
-        tickLandingFrame(delta, { spawn: true });
+        tickFrame(delta, { spawn: true });
       } else {
-        tickLandingFrame(delta, { spawn: false, fade: true });
+        tickFrame(delta, { spawn: false, fade: true });
       }
+
       return;
     }
 
@@ -248,9 +250,9 @@ export function createMicTrailRenderer(container) {
 
     scene = new THREE.Scene();
     decorGroup = new THREE.Group();
-    landingGroup = new THREE.Group();
+    worldGroup = new THREE.Group();
     scene.add(decorGroup);
-    scene.add(landingGroup);
+    scene.add(worldGroup);
 
     camera = new THREE.PerspectiveCamera(
       CAMERA_FOV,
@@ -271,8 +273,7 @@ export function createMicTrailRenderer(container) {
     await renderer.init();
     clock = new THREE.Clock();
 
-    landingEngine = await createTrailEngine(renderer, landingGroup, 1, { vividColors: true });
-    landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
+    engine = await createTrailEngine(renderer, worldGroup, 1, { vividColors: true });
 
     initParticleStates();
     createStaticSprites();
@@ -296,38 +297,41 @@ export function createMicTrailRenderer(container) {
   }
 
   async function runLanding({ onTrailFadeStart } = {}) {
-    if (!landingEngine) return;
+    if (!engine) return;
 
     onLandingFadeStart = onTrailFadeStart;
     landingFadeStarted = false;
 
     stopLoop();
-    landingEngine.clearSlot(0);
-    landingTrail = createLandingTrail();
-    applyPaletteToTrail(landingTrail, 0);
-    landingEngine.applyTrailToGPU(landingTrail);
-    landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
+
+    mode = 'landing';
+    engine.clearSlot(0);
+
+    trail = createLandingTrail();
+
+    applyPaletteToTrail(trail, 0);
+    engine.applyTrailToGPU(trail);
 
     staticSprites.visible = false;
-    mode = 'landing';
     landingStartedAt = performance.now();
-    worldSpinAngle = 0;
-    landingGroup.quaternion.identity();
+
     startLoop();
 
     await new Promise((resolve) => {
       const wait = () => {
         const elapsed = performance.now() - landingStartedAt;
+
         if (elapsed >= LANDING_MS + LANDING_TAIL_MS) {
           stopLoop();
-          landingEngine.clearSlot(0);
-          landingGroup.quaternion.identity();
+          engine.clearSlot(0);
           onLandingFadeStart = null;
           resolve();
           return;
         }
+
         requestAnimationFrame(wait);
       };
+
       wait();
     });
   }
