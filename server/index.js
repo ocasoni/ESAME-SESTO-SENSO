@@ -45,6 +45,7 @@ let meta = loadMeta();
 let trailState = {
   nextPositionIndex: 0,
   processingUploadId: null,
+  drawingUploadId: null,
   lastCompletedUploadId: null,
   lastTrailPositionIndex: null,
 };

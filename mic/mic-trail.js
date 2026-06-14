@@ -1,4 +1,6 @@
 import * as THREE from 'three/webgpu';
+import { PointsNodeMaterial } from 'three/webgpu';
+import { attribute, float, uniform } from 'three/tsl';
 import WebGPU from 'three/addons/capabilities/WebGPU.js';
 import { applyPaletteToTrail, getParticleColor, getTrailPalette } from '../src/trailPalettes.js';
 import {
@@ -18,6 +20,7 @@ const AUTO_ROTATE_SPEED = 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const LANDING_MS = 4000;
 const LANDING_TAIL_MS = 2400;
+const LANDING_COLOR_BRIGHTNESS = 2.15;
 const TRANSITION_STEP_MS = 55;
 
 const MIC_SETTINGS = {
@@ -29,6 +32,21 @@ const MIC_SETTINGS = {
 };
 
 const COLOR_GAIN = 2.45;
+const TRAIL_QUAD_SIZE = 0.12;
+const TRAIL_PARTICLE_SCALE = 0.45;
+const LANDING_WORLD_DIAMETER = TRAIL_QUAD_SIZE * TRAIL_PARTICLE_SCALE;
+
+function rnd(seed) {
+  const x = Math.sin(seed * 127.1 + seed * 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function particleWorldDiameter(seed) {
+  const mix = rnd(seed * 3.17);
+  const px = THREE.MathUtils.lerp(2.2, 9.8, mix);
+  const refPx = 4.6;
+  return LANDING_WORLD_DIAMETER * (px / refPx);
+}
 
 function screenToWorld(nx, ny, aspect) {
   const height = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2)) * CAMERA_DISTANCE;
@@ -62,10 +80,13 @@ export function createMicTrailRenderer(container) {
   let landingEngine = null;
   let landingTrail = null;
   let landingStartedAt = 0;
+  let landingFadeStarted = false;
+  let onLandingFadeStart = null;
   let worldSpinAngle = 0;
 
   let staticPoints = null;
   let staticMaterial = null;
+  let brightnessUniform = null;
   let positionIndex = 0;
   let brightness = 1;
   let liveAnalyser = null;
@@ -83,7 +104,6 @@ export function createMicTrailRenderer(container) {
     particleStates = layout.map((point, index) => ({
       nx: point.nx,
       ny: point.ny,
-      size: point.size,
       seed: point.seed,
       alpha: 1,
       index,
@@ -101,14 +121,17 @@ export function createMicTrailRenderer(container) {
     const aspect = window.innerWidth / window.innerHeight;
     const posAttr = staticPoints.geometry.getAttribute('position');
     const colorAttr = staticPoints.geometry.getAttribute('color');
+    const sizeAttr = staticPoints.geometry.getAttribute('pointSize');
     baseColors = new Float32Array(DECOR_PARTICLE_COUNT * 3);
 
     particleStates.forEach((particle, i) => {
       const world = screenToWorld(particle.nx, particle.ny, aspect);
       const color = paletteColor(particle.seed);
       const alpha = particle.alpha;
+      const worldSize = particleWorldDiameter(particle.seed);
 
       posAttr.setXYZ(i, world.x, world.y, world.z);
+      sizeAttr.setX(i, worldSize);
       colorAttr.setXYZ(
         i,
         color.x * alpha * brightness,
@@ -123,25 +146,29 @@ export function createMicTrailRenderer(container) {
 
     posAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;
+    sizeAttr.needsUpdate = true;
   }
 
   function createStaticPoints() {
+    brightnessUniform = uniform(1);
+
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(DECOR_PARTICLE_COUNT * 3);
     const colors = new Float32Array(DECOR_PARTICLE_COUNT * 3);
+    const pointSizes = new Float32Array(DECOR_PARTICLE_COUNT);
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('pointSize', new THREE.BufferAttribute(pointSizes, 1));
 
-    staticMaterial = new THREE.PointsMaterial({
-      size: 0.24,
-      vertexColors: true,
+    staticMaterial = new PointsNodeMaterial({
       transparent: true,
-      opacity: 1,
-      blending: THREE.AdditiveBlending,
       depthWrite: false,
-      sizeAttenuation: true,
+      blending: THREE.AdditiveBlending,
     });
+    staticMaterial.sizeNode = attribute('pointSize', 'float').mul(brightnessUniform);
+    staticMaterial.colorNode = attribute('color', 'vec3');
+    staticMaterial.opacityNode = float(1);
 
     staticPoints = new THREE.Points(geometry, staticMaterial);
     staticPoints.frustumCulled = false;
@@ -150,7 +177,9 @@ export function createMicTrailRenderer(container) {
 
   function applyStaticBrightness(level) {
     brightness = THREE.MathUtils.clamp(level, 0.45, 1.55);
-    staticMaterial.size = 0.2 + brightness * 0.08;
+    if (brightnessUniform) {
+      brightnessUniform.value = 0.82 + brightness * 0.28;
+    }
     writeStaticGeometry();
   }
 
@@ -197,7 +226,6 @@ export function createMicTrailRenderer(container) {
       transitionQueue.shift();
       particle.nx = step.target.nx;
       particle.ny = step.target.ny;
-      particle.size = step.target.size;
       particle.seed = step.target.seed;
       particle.alpha = 1;
       writeStaticGeometry();
@@ -215,8 +243,14 @@ export function createMicTrailRenderer(container) {
       worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
       landingGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
 
+      if (!landingFadeStarted && elapsed >= LANDING_MS) {
+        landingFadeStarted = true;
+        onLandingFadeStart?.();
+      }
+
       if (elapsed < LANDING_MS) {
         landingEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
+        landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
       } else {
         landingEngine.fadeSlot(landingTrail.particleStart, 1.05);
         renderer.compute(landingEngine.updateParticles);
@@ -311,11 +345,16 @@ export function createMicTrailRenderer(container) {
     }
   }
 
-  async function runLanding() {
-    landingEngine = await createTrailEngine(renderer, landingGroup, 1);
+  async function runLanding({ onTrailFadeStart } = {}) {
+    onLandingFadeStart = onTrailFadeStart;
+    landingFadeStarted = false;
+    landingEngine = await createTrailEngine(renderer, landingGroup, 1, { vividColors: true });
     landingTrail = createLandingTrail();
     applyPaletteToTrail(landingTrail, 0);
-    landingEngine.uniforms.colorBrightness.value = 1.75;
+    landingTrail.colorA.multiplyScalar(1.28);
+    landingTrail.colorB.multiplyScalar(1.22);
+    landingTrail.colorC.multiplyScalar(1.28);
+    landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
     landingEngine.applyTrailToGPU(landingTrail);
 
     staticPoints.visible = false;
@@ -334,6 +373,7 @@ export function createMicTrailRenderer(container) {
           landingEngine = null;
           landingTrail = null;
           landingGroup.quaternion.identity();
+          onLandingFadeStart = null;
           resolve();
           return;
         }

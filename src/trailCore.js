@@ -199,6 +199,7 @@ export function getLoopedBreathFrame(trail, delta) {
 
 export async function createTrailEngine(renderer, worldGroup, slotCount = 1, options = {}) {
   const slotParticles = options.particlesPerTrail ?? particlesPerTrail;
+  const vividColors = options.vividColors ?? false;
   const nbParticles = slotParticles * slotCount;
 
   const currentTrailParticleStart = uniform(0);
@@ -501,7 +502,9 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   particleMaterial.colorNode = Fn(() => {
     const life = particlePositions.toAttribute().w;
     const reveal = particleProperties.toAttribute().w;
-    const liveBrightness = colorBrightness.mul(0.65).add(0.35);
+    const liveBrightness = vividColors
+      ? colorBrightness.mul(0.95)
+      : colorBrightness.mul(0.65).add(0.35);
 
     return particleColors.toAttribute().xyz
       .mul(life)

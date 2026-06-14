@@ -778,7 +778,7 @@ async function publishTrailState(overrides = {}) {
 async function handleNewPhoneUpload(upload) {
   updatePhoneStatus(`Nuova registrazione #${upload.id}…`, '');
 
-  await publishTrailState({ processingUploadId: upload.id });
+  await publishTrailState({ processingUploadId: upload.id, drawingUploadId: null });
 
   try {
     const arrayBuffer = await fetchUploadAudio(resolvedApiUrl, upload.id);
@@ -796,11 +796,6 @@ async function handleNewPhoneUpload(upload) {
 
     const { slot, positionIndex } = prepareSlotForNewTrail();
 
-    await publishTrailState({
-      processingUploadId: upload.id,
-      lastTrailPositionIndex: positionIndex,
-    });
-
     const trail = createTrail(activeTrailNumber, slot, positionIndex);
     activeTrailNumber += 1;
 
@@ -814,10 +809,17 @@ async function handleNewPhoneUpload(upload) {
     audioStarted = true;
     audioIsPlaying = true;
 
+    await publishTrailState({
+      processingUploadId: upload.id,
+      drawingUploadId: upload.id,
+      lastTrailPositionIndex: positionIndex,
+    });
+
     await playTrailRecording(audioBuffer);
 
     await publishTrailState({
       processingUploadId: null,
+      drawingUploadId: null,
       lastCompletedUploadId: upload.id,
       lastTrailPositionIndex: positionIndex,
     });
@@ -825,7 +827,7 @@ async function handleNewPhoneUpload(upload) {
     updatePhoneStatus(`Scia #${upload.id} creata (${upload.originalName || 'audio'})`, 'is-ready');
   } catch (error) {
     console.error(error);
-    await publishTrailState({ processingUploadId: null });
+    await publishTrailState({ processingUploadId: null, drawingUploadId: null });
     updatePhoneStatus(`Errore scia #${upload.id}: ${error.message}`, 'is-error');
   }
 }

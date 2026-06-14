@@ -16,7 +16,7 @@ const landingCaptionEl = document.getElementById('mic-landing-caption');
 const COPY = {
   idle: {
     message:
-      'Respira vicino al microfono del telefono.\nQuando sentirai una vibrazione,\nla registrazione sarà completa.',
+      'Respira vicino al microfono del telefono.',
     action: 'registra il tuo respiro',
   },
   recording: {
@@ -87,7 +87,7 @@ function setState(nextState) {
 function showUi() {
   uiEl.classList.add('is-visible');
   uiEl.classList.remove('is-landing');
-  landingCaptionEl?.classList.remove('is-visible');
+  landingCaptionEl?.classList.remove('is-visible', 'is-exiting');
 }
 
 function setProgress(ratio) {
@@ -99,6 +99,7 @@ async function fetchTrailState() {
     return {
       nextPositionIndex: 0,
       processingUploadId: null,
+      drawingUploadId: null,
       lastCompletedUploadId: null,
       lastTrailPositionIndex: null,
     };
@@ -112,6 +113,7 @@ async function fetchTrailState() {
     return {
       nextPositionIndex: currentPositionIndex,
       processingUploadId: null,
+      drawingUploadId: null,
       lastCompletedUploadId: null,
       lastTrailPositionIndex: null,
     };
@@ -135,7 +137,7 @@ function startTrailPolling() {
     }
 
     if (state === 'waiting' && lastUploadId != null) {
-      if (trailState.processingUploadId === lastUploadId) {
+      if (trailState.drawingUploadId === lastUploadId) {
         setState('generating');
         if (Number.isFinite(trailState.lastTrailPositionIndex)) {
           lockedPositionIndex = trailState.lastTrailPositionIndex;
@@ -330,11 +332,6 @@ async function sendRecording() {
 
     recordedBlob = null;
     lastUploadId = data.id;
-
-    const trailState = await fetchTrailState();
-    if (trailState.processingUploadId === lastUploadId) {
-      setState('generating');
-    }
   } catch (error) {
     console.error(error);
     setState('error');
@@ -363,7 +360,12 @@ async function boot() {
   const ready = await trailRenderer.init();
 
   if (ready) {
-    await trailRenderer.runLanding();
+    await trailRenderer.runLanding({
+      onTrailFadeStart: () => {
+        landingCaptionEl?.classList.remove('is-visible');
+        landingCaptionEl?.classList.add('is-exiting');
+      },
+    });
     await refreshHomePalette();
     trailRenderer.showStaticDecor(currentPositionIndex);
   }

@@ -44,6 +44,11 @@ body {
   opacity: 0.85;
 }
 
+.mic-landing-caption.is-exiting {
+  opacity: 0;
+  transition: opacity 2.4s ease;
+}
+
 .mic-ui {
   position: relative;
   z-index: 1;
