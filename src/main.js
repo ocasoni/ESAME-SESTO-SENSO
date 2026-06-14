@@ -36,6 +36,18 @@ import { buildMicPageUrl, resolveNetworkUrls } from './networkUrls.js';
 import { extractBreathFramesFromArrayBuffer } from './audioFromUpload.js';
 import { fetchUploadAudio, startUploadPolling } from './telegramPoll.js';
 
+async function reportTrailAssignment(uploadId, positionIndex, trailNumber) {
+  try {
+    await fetch(`${resolvedApiUrl}/upload/${uploadId}/trail-assignment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ positionIndex, trailNumber }),
+    });
+  } catch (error) {
+    console.warn('Impossibile registrare assegnazione scia sul server:', error);
+  }
+}
+
 let resolvedApiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 const POLL_INTERVAL_MS = Number(import.meta.env.VITE_POLL_INTERVAL_MS || 1500);
 const AUTO_ROTATE_SPEED = 2;
@@ -511,7 +523,7 @@ async function init() {
 
   createPhoneUploadUI();
   unlockAudioPlayback();
-  publishTrailState();
+
 }
 
 function onWindowResize() {
@@ -748,37 +760,8 @@ function unlockAudioPlayback() {
   document.addEventListener('keydown', unlock, { once: true });
 }
 
-function peekNextPositionIndex() {
-  let excludePosition = null;
-
-  if (activeTrails.length >= maxActiveTrails) {
-    excludePosition = activeTrails[0]?.positionIndex ?? null;
-  }
-
-  return allocatePositionIndex(excludePosition);
-}
-
-async function publishTrailState(overrides = {}) {
-  if (!resolvedApiUrl) return;
-
-  try {
-    await fetch(`${resolvedApiUrl}/trail-state`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nextPositionIndex: peekNextPositionIndex(),
-        ...overrides,
-      }),
-    });
-  } catch (error) {
-    console.warn('Impossibile pubblicare trail-state:', error);
-  }
-}
-
 async function handleNewPhoneUpload(upload) {
   updatePhoneStatus(`Nuova registrazione #${upload.id}…`, '');
-
-  await publishTrailState({ processingUploadId: upload.id, drawingUploadId: null });
 
   try {
     const arrayBuffer = await fetchUploadAudio(resolvedApiUrl, upload.id);
@@ -799,6 +782,8 @@ async function handleNewPhoneUpload(upload) {
     const trail = createTrail(activeTrailNumber, slot, positionIndex);
     activeTrailNumber += 1;
 
+    reportTrailAssignment(upload.id, positionIndex, activeTrailNumber - 1);
+
     trail.mode = 'loop';
     trail.loopFrames = frames;
     trail.loopDuration = frames.length / 60;
@@ -809,25 +794,11 @@ async function handleNewPhoneUpload(upload) {
     audioStarted = true;
     audioIsPlaying = true;
 
-    await publishTrailState({
-      processingUploadId: upload.id,
-      drawingUploadId: upload.id,
-      lastTrailPositionIndex: positionIndex,
-    });
-
     await playTrailRecording(audioBuffer);
-
-    await publishTrailState({
-      processingUploadId: null,
-      drawingUploadId: null,
-      lastCompletedUploadId: upload.id,
-      lastTrailPositionIndex: positionIndex,
-    });
 
     updatePhoneStatus(`Scia #${upload.id} creata (${upload.originalName || 'audio'})`, 'is-ready');
   } catch (error) {
     console.error(error);
-    await publishTrailState({ processingUploadId: null, drawingUploadId: null });
     updatePhoneStatus(`Errore scia #${upload.id}: ${error.message}`, 'is-error');
   }
 }

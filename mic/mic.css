@@ -26,69 +26,26 @@ body {
   height: 100%;
 }
 
-.mic-landing {
-  position: fixed;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 0 24px calc(36px + env(safe-area-inset-bottom, 0px));
-  pointer-events: none;
-  opacity: 1;
-  transition: opacity 2.8s ease;
-}
-
-.mic-landing.is-hidden {
-  opacity: 0;
-  visibility: hidden;
-}
-
-.mic-landing-copy {
-  margin: 0;
-  max-width: 320px;
-  text-align: center;
-  font-size: 0.92rem;
-  line-height: 1.35;
-  color: #fff;
-  animation: mic-landing-pulse 2.1s ease-in-out infinite;
-}
-
-.mic-landing.is-dissolving .mic-landing-copy {
-  animation: none;
-  transition: opacity 2.8s ease;
-  opacity: 0;
-}
-
-@keyframes mic-landing-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.22;
-  }
-}
-
 .mic-ui {
   position: relative;
   z-index: 1;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
+  justify-content: space-between;
   padding: 28px 24px 36px;
   opacity: 0;
-  visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.9s ease, visibility 0.9s ease;
+  transition: opacity 0.9s ease;
 }
 
 .mic-ui.is-visible {
   opacity: 1;
-  visibility: visible;
   pointer-events: auto;
+}
+
+.mic-ui.is-landing {
+  opacity: 0;
 }
 
 .mic-hero {
@@ -100,14 +57,14 @@ body {
   font-family: 'EB Garamond', Georgia, serif;
   font-style: italic;
   font-weight: 400;
-  font-size: clamp(2rem, 6.8vw, 2.55rem);
+  font-size: clamp(2rem, 7vw, 2.55rem);
   line-height: 1.05;
 }
 
 .mic-copy {
   margin: 0;
   font-size: 0.92rem;
-  line-height: 1.18;
+  line-height: 1.22;
   opacity: 0.92;
 }
 
@@ -115,17 +72,17 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  margin-top: 42vh;
-  padding-bottom: 0;
+  gap: 18px;
+  padding-bottom: 8vh;
 }
 
 .mic-message {
-  margin: 0 0 2px;
+  margin: 0;
   max-width: 320px;
   text-align: center;
   font-size: 0.92rem;
-  line-height: 1.28;
+  line-height: 1.22;
+  min-height: 3.2em;
   opacity: 0.9;
   white-space: pre-line;
 }
@@ -164,16 +121,14 @@ body {
   cursor: not-allowed;
 }
 
-.mic-ui.is-recording .mic-action,
-.mic-ui.is-waiting .mic-action,
-.mic-ui.is-generating .mic-action {
+.mic-ui.is-recording .mic-action {
   opacity: 0.55;
   pointer-events: none;
 }
 
-.mic-ui.is-complete .mic-action {
-  opacity: 1;
-  pointer-events: auto;
+.mic-ui.is-uploading .mic-action {
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .mic-ui.is-error .mic-message {

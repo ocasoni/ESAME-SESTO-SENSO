@@ -199,8 +199,6 @@ export function getLoopedBreathFrame(trail, delta) {
 
 export async function createTrailEngine(renderer, worldGroup, slotCount = 1, options = {}) {
   const slotParticles = options.particlesPerTrail ?? particlesPerTrail;
-  const vividColors = options.vividColors ?? false;
-  const instantReveal = options.instantReveal ?? vividColors;
   const nbParticles = slotParticles * slotCount;
 
   const currentTrailParticleStart = uniform(0);
@@ -286,8 +284,8 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
       particlePositions.element(instanceIndex).xyz.assign(vec3(10000.0));
       particlePositions.element(instanceIndex).w.assign(-1.0);
 
-      particleColors.element(instanceIndex).xyz.assign(vec3(0.0));
-      particleColors.element(instanceIndex).w.assign(0.0);
+      particleColors.element(instanceIndex).xyz.assign(vec3(1.0));
+      particleColors.element(instanceIndex).w.assign(1.0);
 
       particleProperties.element(instanceIndex).x.assign(1.0);
       particleProperties.element(instanceIndex).y.assign(0.005);
@@ -390,8 +388,6 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     particleProperty.y.assign(spawnLinksWidth);
     particleProperty.z.assign(0.0);
 
-    const spawnReveal = instantReveal ? float(0.85) : float(0.80);
-
     const pos = mix(
       previousSpawnPosition,
       spawnPosition,
@@ -489,7 +485,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
       pos.add(cymaticOffset)
     );
 
-    particleProperty.w.assign(spawnReveal);
+    particleProperty.w.assign(0.80);
   })().compute(nbToSpawn.value).label('Spawn Particles');
 
   const particleQuadSize = 0.12;
@@ -502,22 +498,16 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   particleMaterial.scaleNode = vec2(particleProperties.toAttribute().x);
   particleMaterial.rotationNode = atan(particleVelocities.toAttribute().y, particleVelocities.toAttribute().x);
 
-  if (vividColors) {
-    particleMaterial.colorNode = Fn(() => {
-      return getInstanceColor(instanceIndex).mul(colorBrightness.mul(0.88));
-    })();
-  } else {
-    particleMaterial.colorNode = Fn(() => {
-      const life = particlePositions.toAttribute().w;
-      const reveal = particleProperties.toAttribute().w;
-      const liveBrightness = colorBrightness.mul(0.65).add(0.35);
+  particleMaterial.colorNode = Fn(() => {
+    const life = particlePositions.toAttribute().w;
+    const reveal = particleProperties.toAttribute().w;
+    const liveBrightness = colorBrightness.mul(0.65).add(0.35);
 
-      return particleColors.toAttribute().xyz
-        .mul(life)
-        .mul(reveal)
-        .mul(liveBrightness);
-    })();
-  }
+    return particleColors.toAttribute().xyz
+      .mul(life)
+      .mul(reveal)
+      .mul(liveBrightness);
+  })();
 
   particleMaterial.opacityNode = Fn(() => {
     const circle = step(uv().xy.sub(0.5).length(), 0.5);
@@ -540,57 +530,6 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     spawnIndex.value = trail.spawnIndex;
     previousSpawnPosition.value.copy(trail.previousSpawnPosition);
     spawnPosition.value.copy(trail.spawnPosition);
-  }
-
-  function applyBreathAndUniforms(trail, delta, breathFrame, options = {}) {
-    const { level, lowBand, midBand, highBand } = breathFrame;
-
-    trail.smoothedLevel = THREE.MathUtils.lerp(trail.smoothedLevel, level, 0.12);
-    runtime.smoothedLevel = trail.smoothedLevel;
-    runtime.audioPhase += delta * (0.65 + trail.smoothedLevel * 1.8);
-
-    trail.smoothedLowBand = THREE.MathUtils.lerp(trail.smoothedLowBand, lowBand, 0.08);
-    trail.smoothedMidBand = THREE.MathUtils.lerp(trail.smoothedMidBand, midBand, 0.08);
-    trail.smoothedHighBand = THREE.MathUtils.lerp(trail.smoothedHighBand, highBand, 0.08);
-
-    runtime.smoothedLowBand = trail.smoothedLowBand;
-    runtime.smoothedMidBand = trail.smoothedMidBand;
-    runtime.smoothedHighBand = trail.smoothedHighBand;
-
-    turbAmplitude.value = THREE.MathUtils.lerp(
-      turbAmplitude.value,
-      0.25 + trail.smoothedLevel * 2.4 + highBand * 1.2,
-      0.08
-    );
-
-    nbToSpawn.value = THREE.MathUtils.lerp(
-      nbToSpawn.value,
-      8 + trail.smoothedLevel * 70,
-      0.08
-    );
-
-    cymaticLevel.value = THREE.MathUtils.lerp(cymaticLevel.value, trail.smoothedLevel, 0.16);
-    cymaticLow.value = THREE.MathUtils.lerp(cymaticLow.value, lowBand, 0.14);
-    cymaticMid.value = THREE.MathUtils.lerp(cymaticMid.value, midBand, 0.14);
-    cymaticHigh.value = THREE.MathUtils.lerp(cymaticHigh.value, highBand, 0.14);
-
-    cymaticPhase.value += delta * (1.2 + trail.smoothedLevel * 5.0);
-
-    const brightnessContrast = THREE.MathUtils.clamp(
-      highBand * 2.2 - lowBand * 1.4 + midBand * 0.25,
-      -1.2,
-      1.2
-    );
-    const audioBrightness = THREE.MathUtils.clamp(
-      0.95 + brightnessContrast * 1.6 + trail.smoothedLevel * 0.55,
-      0.08,
-      4.0
-    );
-    colorBrightness.value = THREE.MathUtils.lerp(
-      colorBrightness.value,
-      audioBrightness,
-      0.28
-    );
   }
 
   function updateAudioDrivenPosition(trail, delta, audioStarted = true) {
@@ -697,7 +636,61 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 
     trail.audioDrivenPosition.copy(trail.position);
 
-    applyBreathAndUniforms(trail, delta, breathFrame);
+    turbAmplitude.value = THREE.MathUtils.lerp(
+      turbAmplitude.value,
+      0.25 + trail.smoothedLevel * 2.4 + highBand * 1.2,
+      0.08
+    );
+
+    nbToSpawn.value = THREE.MathUtils.lerp(
+      nbToSpawn.value,
+      8 + trail.smoothedLevel * 70,
+      0.08
+    );
+
+    cymaticLevel.value = THREE.MathUtils.lerp(
+      cymaticLevel.value,
+      trail.smoothedLevel,
+      0.16
+    );
+
+    cymaticLow.value = THREE.MathUtils.lerp(
+      cymaticLow.value,
+      lowBand,
+      0.14
+    );
+
+    cymaticMid.value = THREE.MathUtils.lerp(
+      cymaticMid.value,
+      midBand,
+      0.14
+    );
+
+    cymaticHigh.value = THREE.MathUtils.lerp(
+      cymaticHigh.value,
+      highBand,
+      0.14
+    );
+
+    cymaticPhase.value += delta * (1.2 + trail.smoothedLevel * 5.0);
+
+    const brightnessContrast = THREE.MathUtils.clamp(
+      (highBand * 2.2) - (lowBand * 1.4) + midBand * 0.25,
+      -1.2,
+      1.2
+    );
+
+    const audioBrightness = THREE.MathUtils.clamp(
+      0.95 + brightnessContrast * 1.6 + trail.smoothedLevel * 0.55,
+      0.08,
+      4.0
+    );
+
+    colorBrightness.value = THREE.MathUtils.lerp(
+      colorBrightness.value,
+      audioBrightness,
+      0.28
+    );
   }
 
   function tickTrail(trail, delta, { spawn = true, audioStarted = true } = {}) {
@@ -747,6 +740,29 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     },
     runtime,
   };
+}
+
+export function createLandingTrail() {
+  const startPosition = new THREE.Vector3(6, 4.5, 0);
+  const direction = new THREE.Vector3(-0.85, -0.52, 0.08).normalize();
+
+  const trail = createTrail(0, 0, 0);
+  trail.mode = 'loop';
+  trail.loopDuration = 5;
+  trail.loopElapsed = 0;
+  trail.loopFrames = buildSplashLoopFrames(5, 60);
+
+  trail.homePosition.copy(startPosition);
+  trail.position.copy(startPosition);
+  trail.spawnPosition.copy(startPosition);
+  trail.previousSpawnPosition.copy(startPosition);
+  trail.audioDrivenPosition.copy(startPosition);
+  trail.direction.copy(direction);
+  trail.targetDirection.copy(direction);
+  trail.speedMultiplier = 2.6;
+  trail.maxRange = 14;
+
+  return trail;
 }
 
 export function createAmbientTrail() {

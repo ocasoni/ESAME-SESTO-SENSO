@@ -1,14 +1,20 @@
 import * as THREE from 'three/webgpu';
 import WebGPU from 'three/addons/capabilities/WebGPU.js';
+import { applyPaletteToTrail } from '../src/trailPalettes.js';
 import {
+  buildSplashLoopFrames,
+  createLandingTrail,
   createTrail,
   createTrailEngine,
   getBreathFrameFromAnalyser,
 } from '../src/trailCore.js';
-import { applyPaletteToTrail } from '../src/trailPalettes.js';
 
 const CAMERA_FOV = 59;
 const CAMERA_DISTANCE = 20;
+const AUTO_ROTATE_SPEED = 2;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const LANDING_MS = 5200;
+const LANDING_TAIL_MS = 1800;
 
 const MIC_SETTINGS = {
   inputGain: 4.0,
@@ -18,92 +24,114 @@ const MIC_SETTINGS = {
   highSensitivity: 7.0,
 };
 
-const LANDING_MOVE_DURATION = 5.4;
-const TRAIL_FADE_DURATION = 2.8;
+const MIC_CLUSTERS = [
+  { nx: 0.78, ny: 0.1, spawns: 8 },
+  { nx: 0.9, ny: 0.38, spawns: 9 },
+  { nx: 0.86, ny: 0.55, spawns: 7 },
+  { nx: 0.1, ny: 0.86, spawns: 14 },
+  { nx: 0.32, ny: 0.72, spawns: 11 },
+  { nx: 0.52, ny: 0.9, spawns: 9 },
+];
 
-const LANDING_DRIFT_FROM = new THREE.Vector3(-3.8, -2.6, 0);
-const LANDING_DRIFT_TO = new THREE.Vector3(4.6, 3.4, 0);
+function screenNormToWorld(nx, ny, camera) {
+  const ndc = new THREE.Vector3(nx * 2 - 1, -(ny * 2 - 1), 0.5);
+  ndc.unproject(camera);
+  const dir = ndc.sub(camera.position).normalize();
+  const depth = -camera.position.z / dir.z;
+  return camera.position.clone().add(dir.multiplyScalar(depth));
+}
 
 export function createMicTrailRenderer(container) {
   let renderer = null;
+  let engine = null;
+  let trail = null;
   let scene = null;
   let worldGroup = null;
   let camera = null;
   let clock = null;
   let rafId = 0;
-  let loopRunning = false;
+  let worldSpinAngle = 0;
   let mode = 'idle';
-
-  let trailEngine = null;
-  let positionIndex = 0;
-  let landingTrail = null;
-  let recordingTrail = null;
-  let landingElapsed = 0;
-  let landingDissolveElapsed = 0;
-  let landingDissolving = false;
-  let landingCompleteCallback = null;
-
+  let paletteIndex = 0;
+  let targetPaletteIndex = 0;
+  let paletteMix = 1;
   let liveAnalyser = null;
   let liveFrequencyData = null;
   let liveWaveformData = null;
+  let landingStartedAt = 0;
+  let loopRunning = false;
+  let staticReady = false;
+  let baseBrightness = 1.35;
+  let smoothedLevel = 0;
 
-  function createFirstTrail(nextPositionIndex) {
-    const trail = createTrail(0, 0, nextPositionIndex);
-    trail.mode = 'auto';
-    trail.loopElapsed = 0;
-    return trail;
+  function setPalette(index) {
+    paletteIndex = index;
+    targetPaletteIndex = index;
+    paletteMix = 1;
+    applyPaletteToTrail(trail, index);
+    engine?.applyTrailToGPU(trail);
   }
 
-  function updateLandingDrift() {
-    const t = Math.min(1, landingElapsed / LANDING_MOVE_DURATION);
-    worldGroup.position.lerpVectors(LANDING_DRIFT_FROM, LANDING_DRIFT_TO, t);
+  function renderStaticFrame(delta, { pulse = false } = {}) {
+    if (pulse && liveAnalyser) {
+      const frame = getBreathFrameFromAnalyser(
+        liveAnalyser,
+        liveFrequencyData,
+        liveWaveformData,
+        MIC_SETTINGS
+      );
+      smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, frame.level, 0.18);
+      engine.uniforms.colorBrightness.value = baseBrightness + smoothedLevel * 1.4;
+    } else {
+      engine.uniforms.colorBrightness.value = THREE.MathUtils.lerp(
+        engine.uniforms.colorBrightness.value,
+        baseBrightness,
+        0.08
+      );
+    }
+
+    renderer.compute(engine.updateParticles);
+    renderer.render(scene, camera);
   }
 
-  function resetWorldDrift() {
-    worldGroup.position.set(0, 0, 0);
-  }
+  function tickLandingFrame(delta, { spawn = true, fade = false } = {}) {
+    worldSpinAngle += (Math.PI * 2 / 60) * AUTO_ROTATE_SPEED * delta;
+    worldGroup.quaternion.setFromAxisAngle(WORLD_UP, -worldSpinAngle);
 
-  function finishLanding() {
-    const callback = landingCompleteCallback;
-    landingCompleteCallback = null;
-    landingTrail = null;
-    landingElapsed = 0;
-    landingDissolveElapsed = 0;
-    landingDissolving = false;
-    mode = 'idle';
-    resetWorldDrift();
-    trailEngine?.clearSlot(0);
-    trailEngine.particleMesh.visible = false;
-    stopLoop();
-    callback?.();
-  }
-
-  function frameUpdate(delta) {
-    if (mode === 'landing' && landingTrail && trailEngine) {
-      if (!landingDissolving) {
-        trailEngine.tickTrail(landingTrail, delta, { spawn: true, audioStarted: true });
-        updateLandingDrift();
-        landingElapsed += delta;
-
-        if (landingElapsed >= LANDING_MOVE_DURATION) {
-          landingDissolving = true;
-        }
-      } else {
-        trailEngine.tickTrail(landingTrail, delta, { spawn: false, audioStarted: false });
-        trailEngine.fadeSlot(landingTrail.particleStart, 1.0 / TRAIL_FADE_DURATION);
-        landingDissolveElapsed += delta;
-
-        if (landingDissolveElapsed >= TRAIL_FADE_DURATION) {
-          finishLanding();
-        }
-      }
-    } else if (mode === 'recording' && recordingTrail && trailEngine) {
-      trailEngine.tickTrail(recordingTrail, delta, { spawn: true, audioStarted: true });
-    } else if (trailEngine) {
-      renderer.compute(trailEngine.updateParticles);
+    if (fade) {
+      renderer.compute(engine.updateParticles);
+      engine.fadeSlot(trail.particleStart, 1.05);
+    } else if (spawn) {
+      engine.tickTrail(trail, delta, { spawn: true, audioStarted: true });
+    } else {
+      renderer.compute(engine.updateParticles);
     }
 
     renderer.render(scene, camera);
+  }
+
+  function frameUpdate(delta) {
+    if (mode === 'landing') {
+      const elapsed = performance.now() - landingStartedAt;
+
+      if (elapsed < LANDING_MS) {
+        tickLandingFrame(delta, { spawn: true });
+      } else {
+        tickLandingFrame(delta, { spawn: false, fade: true });
+      }
+      return;
+    }
+
+    if (!staticReady) return;
+
+    if (mode === 'home' || mode === 'uploading' || mode === 'sent') {
+      renderStaticFrame(delta);
+      return;
+    }
+
+    if (mode === 'recording') {
+      renderStaticFrame(delta, { pulse: true });
+    }
   }
 
   function startLoop() {
@@ -152,10 +180,8 @@ export function createMicTrailRenderer(container) {
     container.appendChild(renderer.domElement);
 
     await renderer.init();
+    engine = await createTrailEngine(renderer, worldGroup, 1);
     clock = new THREE.Clock();
-
-    trailEngine = await createTrailEngine(renderer, worldGroup, 1);
-    trailEngine.particleMesh.visible = false;
 
     window.addEventListener('resize', onResize);
     return true;
@@ -165,102 +191,100 @@ export function createMicTrailRenderer(container) {
     if (!camera || !renderer) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
-  function playLanding(onComplete) {
-    if (!trailEngine) {
-      onComplete?.();
-      return { get dissolveStarted() { return false; } };
-    }
+  async function runLanding() {
+    if (!engine) return;
 
-    trailEngine.clearSlot(0);
-    resetWorldDrift();
-
-    landingTrail = createFirstTrail(0);
-    mode = 'landing';
-    landingElapsed = 0;
-    landingDissolveElapsed = 0;
-    landingDissolving = false;
-    landingCompleteCallback = onComplete ?? null;
-    trailEngine.particleMesh.visible = true;
-
-    if (!loopRunning) startLoop();
-
-    return {
-      get dissolveStarted() {
-        return landingDissolving;
-      },
-    };
-  }
-
-  function setHomeView() {
-    mode = 'idle';
-    recordingTrail = null;
-    landingTrail = null;
-    resetWorldDrift();
-    trailEngine?.clearSlot(0);
-    if (trailEngine) {
-      trailEngine.particleMesh.visible = false;
-    }
     stopLoop();
+    mode = 'landing';
+    staticReady = false;
+    engine.clearSlot(0);
+    trail = createLandingTrail();
+    applyPaletteToTrail(trail, 0);
+    engine.applyTrailToGPU(trail);
+    landingStartedAt = performance.now();
+    startLoop();
+
+    await new Promise((resolve) => {
+      const wait = () => {
+        const elapsed = performance.now() - landingStartedAt;
+        if (elapsed >= LANDING_MS + LANDING_TAIL_MS) {
+          stopLoop();
+          engine.clearSlot(0);
+          resolve();
+          return;
+        }
+        requestAnimationFrame(wait);
+      };
+      wait();
+    });
   }
 
-  function setScreenLayout() {
-    // Nessun layout particellare in home.
+  async function spawnStaticField(positionIndex) {
+    engine.clearSlot(0);
+    staticReady = false;
+
+    trail = createTrail(0, 0, positionIndex);
+    trail.mode = 'loop';
+    trail.loopDuration = 4;
+    trail.loopElapsed = 1.6;
+    trail.loopFrames = buildSplashLoopFrames(4, 60);
+    applyPaletteToTrail(trail, positionIndex);
+    paletteIndex = positionIndex;
+    targetPaletteIndex = positionIndex;
+
+    for (const cluster of MIC_CLUSTERS) {
+      const center = screenNormToWorld(cluster.nx, cluster.ny, camera);
+      trail.spawnPosition.copy(center);
+      trail.previousSpawnPosition.copy(center);
+      trail.audioDrivenPosition.copy(center);
+      trail.position.copy(center);
+      engine.applyTrailToGPU(trail);
+
+      for (let i = 0; i < cluster.spawns; i += 1) {
+        engine.tickTrail(trail, 0.016, { spawn: true, audioStarted: false });
+      }
+    }
+
+    staticReady = true;
+    engine.uniforms.colorBrightness.value = baseBrightness;
   }
 
-  function setPalette(nextPositionIndex) {
-    positionIndex = nextPositionIndex;
+  async function startHome(positionIndex) {
+    if (!engine) return;
 
-    if (landingTrail) {
-      applyPaletteToTrail(landingTrail, nextPositionIndex);
-    }
-
-    if (recordingTrail) {
-      applyPaletteToTrail(recordingTrail, nextPositionIndex);
-    }
+    stopLoop();
+    mode = 'home';
+    worldGroup.quaternion.identity();
+    await spawnStaticField(positionIndex);
+    startLoop();
   }
 
   function startRecording(analyser, frequencyData, waveformData) {
-    if (!trailEngine) return;
+    if (!engine || !staticReady) return;
 
+    mode = 'recording';
     liveAnalyser = analyser;
     liveFrequencyData = frequencyData;
     liveWaveformData = waveformData;
+    smoothedLevel = 0;
 
-    trailEngine.clearSlot(0);
-    resetWorldDrift();
-
-    recordingTrail = createTrail(0, 0, positionIndex);
-    recordingTrail.mode = 'live';
-    recordingTrail.getLiveFrame = () =>
-      getBreathFrameFromAnalyser(
-        liveAnalyser,
-        liveFrequencyData,
-        liveWaveformData,
-        MIC_SETTINGS
-      );
-
-    mode = 'recording';
-    trailEngine.particleMesh.visible = true;
     if (!loopRunning) startLoop();
   }
 
-  function stopRecordingVisual() {
+  function enterUploadingState() {
+    mode = 'uploading';
     liveAnalyser = null;
-    liveFrequencyData = null;
-    liveWaveformData = null;
-
-    if (recordingTrail && trailEngine) {
-      trailEngine.fadeSlot(recordingTrail.particleStart, 1.0 / TRAIL_FADE_DURATION);
+    smoothedLevel = 0;
+    if (engine) {
+      engine.uniforms.colorBrightness.value = baseBrightness;
     }
+  }
 
-    recordingTrail = null;
-    mode = 'idle';
-    trailEngine.particleMesh.visible = false;
-    stopLoop();
+  function applyAssignedPalette(positionIndex) {
+    setPalette(positionIndex);
   }
 
   function dispose() {
@@ -268,16 +292,19 @@ export function createMicTrailRenderer(container) {
     window.removeEventListener('resize', onResize);
     renderer?.dispose();
     container.innerHTML = '';
+    renderer = null;
+    engine = null;
+    trail = null;
+    staticReady = false;
   }
 
   return {
     init,
-    playLanding,
-    setHomeView,
-    setScreenLayout,
-    setPalette,
+    runLanding,
+    startHome,
     startRecording,
-    stopRecordingVisual,
+    enterUploadingState,
+    applyAssignedPalette,
     dispose,
   };
 }

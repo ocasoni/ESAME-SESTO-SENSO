@@ -4,11 +4,9 @@ const params = new URLSearchParams(window.location.search);
 const API_URL = (params.get('api') || '').replace(/\/$/, '');
 const UPLOAD_SECRET = params.get('secret') || '';
 const RECORD_SECONDS = 20;
-const TRAIL_POLL_MS = 1200;
-const POST_UPLOAD_COMPLETE_MS = 20000;
+const SENT_MESSAGE_DELAY_MS = 25000;
 
 const uiEl = document.getElementById('mic-ui');
-const landingEl = document.getElementById('mic-landing');
 const messageEl = document.getElementById('mic-message');
 const progressEl = document.getElementById('mic-progress');
 const actionBtn = document.getElementById('mic-action');
@@ -17,22 +15,18 @@ const canvasEl = document.getElementById('mic-canvas');
 const COPY = {
   idle: {
     message:
-      'Respira vicino al microfono del telefono.',
+      'Respira vicino al microfono del telefono.\nQuando sentirai una vibrazione,\nla registrazione sarà completa.',
     action: 'registra il tuo respiro',
   },
   recording: {
     message: '',
     action: 'respira…',
   },
-  waiting: {
+  uploading: {
     message: 'Il tuo respiro prende forma…',
     action: 'inviato',
   },
-  generating: {
-    message: "L'eco del tuo respiro è ora traccia visibile",
-    action: 'inviato',
-  },
-  complete: {
+  sent: {
     message: "L'eco del tuo respiro è ora traccia visibile",
     action: 'registra ancora',
   },
@@ -54,152 +48,51 @@ let recordedBlob = null;
 let progressInterval = null;
 let recordStartedAt = 0;
 let trailRenderer = null;
-let trailPollTimer = null;
-let currentPositionIndex = 0;
-let lastUploadId = null;
-let lockedPositionIndex = null;
-let uploadCompleteTimer = null;
-
-function clearUploadCompleteTimer() {
-  if (uploadCompleteTimer) {
-    clearTimeout(uploadCompleteTimer);
-    uploadCompleteTimer = null;
-  }
-}
-
-function scheduleUploadComplete() {
-  clearUploadCompleteTimer();
-  uploadCompleteTimer = setTimeout(() => {
-    if (lastUploadId == null || (state !== 'waiting' && state !== 'generating')) {
-      return;
-    }
-    setState('complete');
-    trailRenderer?.setPalette(lockedPositionIndex ?? currentPositionIndex);
-  }, POST_UPLOAD_COMPLETE_MS);
-}
+let currentUploadId = null;
+let assignedPositionIndex = 0;
+let sentMessageTimer = null;
+let assignmentPollTimer = null;
 
 function setState(nextState) {
   state = nextState;
-  uiEl.classList.remove('is-recording', 'is-waiting', 'is-generating', 'is-complete', 'is-error');
+  uiEl.classList.remove('is-recording', 'is-uploading', 'is-sent', 'is-error');
 
   if (nextState === 'recording') uiEl.classList.add('is-recording');
-  if (nextState === 'waiting') uiEl.classList.add('is-waiting');
-  if (nextState === 'generating') uiEl.classList.add('is-generating');
-  if (nextState === 'complete') uiEl.classList.add('is-complete');
+  if (nextState === 'uploading') uiEl.classList.add('is-uploading');
+  if (nextState === 'sent') uiEl.classList.add('is-sent');
   if (nextState === 'error') uiEl.classList.add('is-error');
 
   const copy = COPY[nextState] || COPY.idle;
   messageEl.textContent = copy.message;
   actionBtn.textContent = copy.action;
-  actionBtn.disabled = nextState === 'boot' || nextState === 'waiting' || nextState === 'generating';
+  actionBtn.disabled = nextState === 'boot' || nextState === 'uploading';
 
-  if (nextState !== 'boot' && nextState !== 'recording') {
-    trailRenderer?.setScreenLayout(nextState);
-  }
-
-  if (nextState === 'waiting' || nextState === 'generating') {
-    progressEl.style.width = '100%';
-  } else if (nextState !== 'recording') {
-    progressEl.style.width = '0%';
+  if (nextState !== 'recording') {
+    progressEl.style.width = nextState === 'uploading' || nextState === 'sent' ? '100%' : '0%';
   }
 }
 
 function showUi() {
   uiEl.classList.add('is-visible');
-}
-
-function hideLanding() {
-  landingEl.classList.add('is-hidden');
-  landingEl.setAttribute('aria-hidden', 'true');
-}
-
-function startLandingDissolve() {
-  landingEl.classList.add('is-dissolving');
-}
-
-async function playLandingIntro() {
-  if (!trailRenderer) {
-    hideLanding();
-    return;
-  }
-
-  await new Promise((resolve) => {
-    const landing = trailRenderer.playLanding(resolve);
-
-    const pollDissolve = () => {
-      if (landing.dissolveStarted) {
-        startLandingDissolve();
-        return;
-      }
-      requestAnimationFrame(pollDissolve);
-    };
-
-    pollDissolve();
-  });
-
-  hideLanding();
+  uiEl.classList.remove('is-landing');
 }
 
 function setProgress(ratio) {
   progressEl.style.width = `${Math.min(100, Math.max(0, ratio * 100))}%`;
 }
 
-async function fetchTrailState() {
-  if (!API_URL) {
-    return {
-      nextPositionIndex: 0,
-      processingUploadId: null,
-      drawingUploadId: null,
-      lastCompletedUploadId: null,
-      lastTrailPositionIndex: null,
-    };
-  }
+async function fetchHomePaletteIndex() {
+  if (!API_URL) return 0;
 
   try {
-    const response = await fetch(`${API_URL}/trail-state`);
-    if (!response.ok) throw new Error('trail-state unavailable');
-    return response.json();
+    const response = await fetch(`${API_URL}/trail-preview`);
+    if (!response.ok) return 0;
+    const data = await response.json();
+    if (data.nextTrailNumber === 0) return 0;
+    return Number.isFinite(data.lastPositionIndex) ? data.lastPositionIndex : 0;
   } catch {
-    return {
-      nextPositionIndex: currentPositionIndex,
-      processingUploadId: null,
-      drawingUploadId: null,
-      lastCompletedUploadId: null,
-      lastTrailPositionIndex: null,
-    };
+    return 0;
   }
-}
-
-async function refreshHomePalette() {
-  const trailState = await fetchTrailState();
-  currentPositionIndex = trailState.nextPositionIndex ?? 0;
-  trailRenderer?.setPalette(currentPositionIndex);
-}
-
-function startTrailPolling() {
-  stopTrailPolling();
-  trailPollTimer = setInterval(async () => {
-    const trailState = await fetchTrailState();
-
-    if (state === 'idle') {
-      currentPositionIndex = trailState.nextPositionIndex ?? currentPositionIndex;
-      trailRenderer?.setPalette(currentPositionIndex);
-    }
-
-    if (state === 'waiting' && lastUploadId != null) {
-      if (trailState.drawingUploadId === lastUploadId) {
-        if (Number.isFinite(trailState.lastTrailPositionIndex)) {
-          lockedPositionIndex = trailState.lastTrailPositionIndex;
-          trailRenderer?.setPalette(trailState.lastTrailPositionIndex);
-        }
-      }
-    }
-  }, TRAIL_POLL_MS);
-}
-
-function stopTrailPolling() {
-  clearInterval(trailPollTimer);
-  trailPollTimer = null;
 }
 
 async function ensureApiConfigured() {
@@ -213,8 +106,6 @@ async function ensureApiConfigured() {
   try {
     const response = await fetch(`${API_URL}/health`);
     if (!response.ok) throw new Error('Backend non raggiungibile');
-    await refreshHomePalette();
-    startTrailPolling();
     return true;
   } catch {
     setState('error');
@@ -223,20 +114,73 @@ async function ensureApiConfigured() {
   }
 }
 
+function stopMedia() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+  }
+
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close().catch(() => {});
+  }
+
+  audioContext = null;
+  analyser = null;
+  clearInterval(progressInterval);
+  progressInterval = null;
+}
+
+function clearUploadTimers() {
+  clearTimeout(sentMessageTimer);
+  clearInterval(assignmentPollTimer);
+  sentMessageTimer = null;
+  assignmentPollTimer = null;
+}
+
 function vibrateDone() {
   if ('vibrate' in navigator) {
     navigator.vibrate([120, 60, 120]);
   }
 }
 
-async function startRecording() {
-  if (state === 'recording' || state === 'waiting' || state === 'generating' || !API_URL) {
-    return;
+async function pollTrailAssignment(uploadId) {
+  if (!API_URL || !uploadId) return;
+
+  const response = await fetch(`${API_URL}/upload/${uploadId}`);
+  if (!response.ok) return;
+
+  const data = await response.json();
+
+  if (Number.isFinite(data.positionIndex)) {
+    assignedPositionIndex = data.positionIndex;
+    trailRenderer?.applyAssignedPalette(assignedPositionIndex);
   }
+}
 
-  await refreshHomePalette();
+function startAssignmentPolling(uploadId) {
+  clearInterval(assignmentPollTimer);
+  assignmentPollTimer = setInterval(() => {
+    pollTrailAssignment(uploadId).catch(() => {});
+  }, 1500);
+  pollTrailAssignment(uploadId).catch(() => {});
+}
 
-  clearUploadCompleteTimer();
+function scheduleSentMessage() {
+  clearTimeout(sentMessageTimer);
+  sentMessageTimer = setTimeout(() => {
+    setState('sent');
+    actionBtn.disabled = false;
+  }, SENT_MESSAGE_DELAY_MS);
+}
+
+async function startRecording() {
+  if (state === 'recording' || state === 'uploading' || !API_URL) return;
+
+  clearUploadTimers();
 
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -265,8 +209,6 @@ async function startRecording() {
 
     chunks = [];
     recordedBlob = null;
-    lastUploadId = null;
-    lockedPositionIndex = null;
 
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
@@ -297,17 +239,10 @@ async function startRecording() {
     }, 100);
   } catch (error) {
     console.error(error);
-    if (mediaStream) {
-      mediaStream.getTracks().forEach((track) => track.stop());
-      mediaStream = null;
-    }
-    if (audioContext && audioContext.state !== 'closed') {
-      audioContext.close().catch(() => {});
-    }
-    audioContext = null;
-    analyser = null;
+    stopMedia();
     setState('error');
     messageEl.textContent = 'Consenti l\'accesso al microfono nelle impostazioni del browser.';
+    actionBtn.disabled = false;
   }
 }
 
@@ -331,15 +266,8 @@ async function finishRecording() {
     mediaStream = null;
   }
 
-  if (audioContext && audioContext.state !== 'closed') {
-    audioContext.close().catch(() => {});
-  }
-
-  audioContext = null;
-  analyser = null;
-  trailRenderer?.stopRecordingVisual();
-
-  setState('waiting');
+  setState('uploading');
+  trailRenderer?.enterUploadingState();
   await sendRecording();
 }
 
@@ -371,10 +299,13 @@ async function sendRecording() {
     }
 
     recordedBlob = null;
-    lastUploadId = data.id;
-    scheduleUploadComplete();
+    currentUploadId = data.id;
+    setState('uploading');
+    scheduleSentMessage();
+    startAssignmentPolling(currentUploadId);
   } catch (error) {
     console.error(error);
+    clearUploadTimers();
     setState('error');
     messageEl.textContent = error.message;
     actionBtn.disabled = false;
@@ -382,7 +313,7 @@ async function sendRecording() {
 }
 
 actionBtn.addEventListener('click', () => {
-  if (state === 'idle' || state === 'complete') {
+  if (state === 'idle' || state === 'sent') {
     startRecording();
     return;
   }
@@ -394,42 +325,24 @@ actionBtn.addEventListener('click', () => {
 
 async function boot() {
   setState('boot');
-  uiEl.classList.remove('is-visible');
+  uiEl.classList.add('is-landing');
+  clearUploadTimers();
 
-  let rendererReady = false;
-  const apiPromise = ensureApiConfigured();
+  trailRenderer = createMicTrailRenderer(canvasEl);
+  const ready = await trailRenderer.init();
 
-  try {
-    trailRenderer = createMicTrailRenderer(canvasEl);
-    rendererReady = await trailRenderer.init();
-
-    if (rendererReady) {
-      await refreshHomePalette();
-      await playLandingIntro();
-    } else {
-      hideLanding();
-    }
-  } catch (error) {
-    console.error('Errore avvio mic:', error);
-    hideLanding();
-  } finally {
-    const apiOk = await apiPromise;
-    if (apiOk) {
-      setState('idle');
-      trailRenderer?.setScreenLayout();
-    }
-
-    if (rendererReady && trailRenderer) {
-      trailRenderer.setHomeView();
-    }
-
-    showUi();
+  if (ready) {
+    await trailRenderer.runLanding();
+    const homePalette = await fetchHomePaletteIndex();
+    await trailRenderer.startHome(homePalette);
   }
+
+  const apiOk = await ensureApiConfigured();
+  if (apiOk) {
+    setState('idle');
+  }
+
+  showUi();
 }
 
 boot();
-
-window.addEventListener('beforeunload', () => {
-  stopTrailPolling();
-  clearUploadCompleteTimer();
-});

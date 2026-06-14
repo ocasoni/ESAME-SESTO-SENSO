@@ -26,13 +26,17 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 
 function loadMeta() {
   if (!fs.existsSync(META_FILE)) {
-    return { lastId: 0, uploads: [] };
+    return { lastId: 0, uploads: [], lastTrailAssignment: null };
   }
 
   try {
-    return JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
+    if (!data.lastTrailAssignment) {
+      data.lastTrailAssignment = null;
+    }
+    return data;
   } catch {
-    return { lastId: 0, uploads: [] };
+    return { lastId: 0, uploads: [], lastTrailAssignment: null };
   }
 }
 
@@ -41,14 +45,6 @@ function saveMeta(meta) {
 }
 
 let meta = loadMeta();
-
-let trailState = {
-  nextPositionIndex: 0,
-  processingUploadId: null,
-  drawingUploadId: null,
-  lastCompletedUploadId: null,
-  lastTrailPositionIndex: null,
-};
 
 const storage = multer.diskStorage({
   destination: UPLOAD_DIR,
@@ -95,18 +91,6 @@ app.get('/network-info', (_req, res) => {
   });
 });
 
-app.get('/trail-state', (_req, res) => {
-  res.json(trailState);
-});
-
-app.post('/trail-state', (req, res) => {
-  trailState = {
-    ...trailState,
-    ...req.body,
-  };
-  res.json({ ok: true, trailState });
-});
-
 app.get('/latest', (req, res) => {
   const since = parseInt(req.query.since || '0', 10);
   const uploads = meta.uploads.filter((entry) => entry.id > since);
@@ -136,6 +120,53 @@ app.get('/audio/:id', (req, res) => {
   res.sendFile(filePath);
 });
 
+app.get('/upload/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const entry = meta.uploads.find((item) => item.id === id);
+
+  if (!entry) {
+    res.status(404).json({ error: 'Upload non trovato' });
+    return;
+  }
+
+  res.json(entry);
+});
+
+app.get('/trail-preview', (_req, res) => {
+  const last = meta.lastTrailAssignment || null;
+
+  res.json({
+    nextTrailNumber: last ? last.trailNumber + 1 : 0,
+    lastPositionIndex: last?.positionIndex ?? null,
+  });
+});
+
+app.post('/upload/:id/trail-assignment', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const entry = meta.uploads.find((item) => item.id === id);
+
+  if (!entry) {
+    res.status(404).json({ error: 'Upload non trovato' });
+    return;
+  }
+
+  const positionIndex = Number(req.body?.positionIndex);
+  const trailNumber = Number(req.body?.trailNumber);
+
+  if (!Number.isFinite(positionIndex) || !Number.isFinite(trailNumber)) {
+    res.status(400).json({ error: 'positionIndex e trailNumber richiesti' });
+    return;
+  }
+
+  entry.positionIndex = positionIndex;
+  entry.trailNumber = trailNumber;
+  entry.assignedAt = new Date().toISOString();
+  meta.lastTrailAssignment = { positionIndex, trailNumber };
+  saveMeta(meta);
+
+  res.json({ ok: true, positionIndex, trailNumber });
+});
+
 app.post('/upload', upload.single('audio'), async (req, res) => {
   try {
     if (UPLOAD_SECRET && req.headers['x-upload-secret'] !== UPLOAD_SECRET) {
@@ -150,11 +181,6 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
 
     meta.lastId += 1;
 
-    const positionIndexRaw = req.body?.positionIndex;
-    const positionIndex = Number.isFinite(Number(positionIndexRaw))
-      ? Number(positionIndexRaw)
-      : null;
-
     const entry = {
       id: meta.lastId,
       filename: req.file.filename,
@@ -162,7 +188,9 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
       mimeType: req.file.mimetype,
       size: req.file.size,
       createdAt: new Date().toISOString(),
-      positionIndex,
+      positionIndex: null,
+      trailNumber: null,
+      assignedAt: null,
     };
 
     meta.uploads.push(entry);
@@ -177,7 +205,6 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
     res.json({
       ok: true,
       id: entry.id,
-      positionIndex: entry.positionIndex,
       telegramSent,
     });
   } catch (error) {
