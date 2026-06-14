@@ -197,28 +197,31 @@ export function getLoopedBreathFrame(trail, delta) {
   return { level: 0, lowBand: 0, midBand: 0, highBand: 0 };
 }
 
-// Traiettoria landing ricavata dal video di riferimento (frame-diff + compensazione rotazione).
+// Traiettoria landing: entra/esce dallo schermo più volte (coordinate schermo oltre 0–1).
 export function buildLandingPathKeyframes() {
   return [
-    { t: 0.1, pos: new THREE.Vector3(4.6, 4.04, -0.1) },
-    { t: 0.39, pos: new THREE.Vector3(2.67, 2.77, -0.22) },
-    { t: 0.69, pos: new THREE.Vector3(-2.32, 3.11, 0.34) },
-    { t: 0.98, pos: new THREE.Vector3(-2.97, 4.04, 0.62) },
-    { t: 1.28, pos: new THREE.Vector3(-3.02, 3.49, 0.83) },
-    { t: 1.57, pos: new THREE.Vector3(-2.75, 2.79, 0.94) },
-    { t: 1.86, pos: new THREE.Vector3(-2.61, 2.19, 1.07) },
-    { t: 2.16, pos: new THREE.Vector3(-2.31, 1.96, 1.12) },
-    { t: 2.45, pos: new THREE.Vector3(-1.9, 5.38, 1.07) },
-    { t: 2.75, pos: new THREE.Vector3(-0.06, 5.51, 0.04) },
-    { t: 3.04, pos: new THREE.Vector3(0.24, 4.08, -0.18) },
-    { t: 3.34, pos: new THREE.Vector3(0.28, 2.83, -0.23) },
-    { t: 3.63, pos: new THREE.Vector3(0, 0.7, 0) },
-    { t: 3.92, pos: new THREE.Vector3(-0.01, -1.91, 0.01) },
-    { t: 4.22, pos: new THREE.Vector3(-0.73, -3.68, 0.9) },
-    { t: 4.51, pos: new THREE.Vector3(-1.59, -4.83, 2.2) },
-    { t: 4.81, pos: new THREE.Vector3(-1.6, -2.96, 2.53) },
-    { t: 5.0, pos: new THREE.Vector3(-0.88, -0.43, 1.53) },
-    { t: 5.15, pos: new THREE.Vector3(-0.23, 2.13, 0.43) },
+    { t: 0.0, pos: new THREE.Vector3(6.68, 9.57, 0) },
+    { t: 0.22, pos: new THREE.Vector3(3.73, 7.66, -0.17) },
+    { t: 0.48, pos: new THREE.Vector3(-0.78, 5.96, 0.08) },
+    { t: 0.72, pos: new THREE.Vector3(-5.82, 6.38, 0.88) },
+    { t: 0.95, pos: new THREE.Vector3(-6.35, 3.4, 1.28) },
+    { t: 1.18, pos: new THREE.Vector3(-4.28, 2.13, 1.08) },
+    { t: 1.42, pos: new THREE.Vector3(-1.13, 2.98, 0.35) },
+    { t: 1.68, pos: new THREE.Vector3(2.03, 6.81, -0.74) },
+    { t: 1.95, pos: new THREE.Vector3(5.59, 9.36, -2.42) },
+    { t: 2.18, pos: new THREE.Vector3(4.23, 11.49, -2.08) },
+    { t: 2.42, pos: new THREE.Vector3(0.69, 8.51, -0.38) },
+    { t: 2.68, pos: new THREE.Vector3(0, 2.55, 0) },
+    { t: 2.95, pos: new THREE.Vector3(-0.32, -2.55, 0.23) },
+    { t: 3.22, pos: new THREE.Vector3(-2.45, -8.93, 1.96) },
+    { t: 3.48, pos: new THREE.Vector3(-4.54, -12.34, 4.05) },
+    { t: 3.74, pos: new THREE.Vector3(-2.92, -11.06, 2.91) },
+    { t: 4.0, pos: new THREE.Vector3(0.13, -5.96, -0.15) },
+    { t: 4.28, pos: new THREE.Vector3(1.96, -1.06, -2.45) },
+    { t: 4.55, pos: new THREE.Vector3(3.64, 1.7, -5.12) },
+    { t: 4.78, pos: new THREE.Vector3(0.64, 0.43, -0.99) },
+    { t: 5.05, pos: new THREE.Vector3(-0.24, 2.55, 0.43) },
+    { t: 5.15, pos: new THREE.Vector3(-0.23, 2.55, 0.43) },
   ];
 }
 
