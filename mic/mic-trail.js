@@ -26,13 +26,21 @@ const MIC_SETTINGS = {
 
 const MIC_RIBBONS = [
   {
-    // fascia bassa che attraversa il fondo
-    p0: { nx: -0.12, ny: 0.9 },
-    p1: { nx: 0.28, ny: 0.96 },
-    p2: { nx: 0.72, ny: 0.88 },
-    p3: { nx: 1.14, ny: 0.94 },
-    steps: 90,
+    // basso: angolo destro → centro → giù → risale → esce a sinistra
+    p0: { nx: 1.1, ny: 0.93 },
+    p1: { nx: 0.72, ny: 0.58 },
+    p2: { nx: 0.48, ny: 1.02 },
+    p3: { nx: 0.28, ny: 0.78 },
+    steps: 55,
     breathOffset: 0.8,
+  },
+  {
+    p0: { nx: 0.28, ny: 0.78 },
+    p1: { nx: 0.14, ny: 0.96 },
+    p2: { nx: 0.02, ny: 0.62 },
+    p3: { nx: -0.18, ny: 0.52 },
+    steps: 55,
+    breathOffset: 1.0,
   },
   {
     // angolo basso-sinistra → sale verso centro-basso
@@ -44,12 +52,12 @@ const MIC_RIBBONS = [
     breathOffset: 1.2,
   },
   {
-    // alto-destra, parzialmente fuori schermo
-    p0: { nx: 0.68, ny: -0.06 },
-    p1: { nx: 0.92, ny: 0.1 },
-    p2: { nx: 1.1, ny: 0.26 },
-    p3: { nx: 1.04, ny: 0.44 },
-    steps: 65,
+    // alto-destra: entra nello schermo, curva, esce a destra
+    p0: { nx: 0.82, ny: -0.02 },
+    p1: { nx: 0.62, ny: 0.14 },
+    p2: { nx: 0.78, ny: 0.34 },
+    p3: { nx: 1.12, ny: 0.28 },
+    steps: 70,
     breathOffset: 1.5,
   },
 ];
@@ -150,8 +158,14 @@ export function createMicTrailRenderer(container) {
         liveWaveformData,
         MIC_SETTINGS
       );
-      smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, frame.level, 0.18);
-      engine.uniforms.colorBrightness.value = (baseBrightness + smoothedLevel * 1.4) * fade;
+      const inputLevel = THREE.MathUtils.clamp(
+        frame.level * 0.55 + frame.lowBand * 0.25 + frame.midBand * 0.12 + frame.highBand * 0.08,
+        0,
+        1
+      );
+      smoothedLevel = THREE.MathUtils.lerp(smoothedLevel, inputLevel, 0.32);
+      const brightness = baseBrightness * (0.45 + smoothedLevel * 2.6);
+      engine.uniforms.colorBrightness.value = brightness * fade;
     } else {
       engine.uniforms.colorBrightness.value = THREE.MathUtils.lerp(
         engine.uniforms.colorBrightness.value,
