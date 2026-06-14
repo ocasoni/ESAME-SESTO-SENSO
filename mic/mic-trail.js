@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { PointsNodeMaterial } from 'three/webgpu';
-import { attribute, float, uniform } from 'three/tsl';
+import { instancedBufferAttribute, shapeCircle } from 'three/tsl';
 import WebGPU from 'three/addons/capabilities/WebGPU.js';
 import { applyPaletteToTrail, getParticleColor, getTrailPalette } from '../src/trailPalettes.js';
 import {
@@ -31,16 +30,24 @@ const MIC_SETTINGS = {
   highSensitivity: 7.0,
 };
 
-const COLOR_GAIN = 2.45;
+const COLOR_GAIN = 3.4;
+const DOT_SIZE_MIN_PX = 18;
+const DOT_SIZE_MAX_PX = 40;
+const DOT_ALPHA = 1.0;
 
 function rnd(seed) {
   const x = Math.sin(seed * 127.1 + seed * 311.7) * 43758.5453;
   return x - Math.floor(x);
 }
 
-function particlePixelSize(seed) {
+function particlePixelSize(seed, nx) {
   const mix = rnd(seed * 3.17);
-  return THREE.MathUtils.lerp(7, 20, mix);
+  let size = THREE.MathUtils.lerp(DOT_SIZE_MIN_PX, DOT_SIZE_MAX_PX, mix);
+  const edgeDistance = Math.min(nx, 1 - nx);
+  if (edgeDistance < 0.14) {
+    size = Math.max(size, THREE.MathUtils.lerp(28, DOT_SIZE_MAX_PX, 1 - edgeDistance / 0.14));
+  }
+  return size;
 }
 
 function screenToWorld(nx, ny, aspect) {
@@ -79,9 +86,12 @@ export function createMicTrailRenderer(container) {
   let onLandingFadeStart = null;
   let worldSpinAngle = 0;
 
-  let staticPoints = null;
+  let staticSprites = null;
   let staticMaterial = null;
-  let brightnessUniform = null;
+  let staticPositionAttr = null;
+  let staticColorAttr = null;
+  let staticSizeAttr = null;
+  let staticAlphaAttr = null;
   let positionIndex = 0;
   let brightness = 1;
   let liveAnalyser = null;
@@ -111,27 +121,26 @@ export function createMicTrailRenderer(container) {
   }
 
   function writeStaticGeometry() {
-    if (!staticPoints) return;
+    if (!staticSprites) return;
 
     const aspect = window.innerWidth / window.innerHeight;
-    const posAttr = staticPoints.geometry.getAttribute('position');
-    const colorAttr = staticPoints.geometry.getAttribute('color');
-    const sizeAttr = staticPoints.geometry.getAttribute('pointSize');
     baseColors = new Float32Array(DECOR_PARTICLE_COUNT * 3);
 
     particleStates.forEach((particle, i) => {
       const world = screenToWorld(particle.nx, particle.ny, aspect);
       const color = paletteColor(particle.seed);
-      const alpha = particle.alpha;
-      const worldSize = particlePixelSize(particle.seed);
+      const alpha = particle.alpha * DOT_ALPHA;
+      const pixelSize = particlePixelSize(particle.seed, particle.nx);
+      const colorBoost = brightness;
 
-      posAttr.setXYZ(i, world.x, world.y, world.z);
-      sizeAttr.setX(i, worldSize);
-      colorAttr.setXYZ(
+      staticPositionAttr.setXYZ(i, world.x, world.y, world.z);
+      staticSizeAttr.setX(i, pixelSize);
+      staticAlphaAttr.setX(i, alpha);
+      staticColorAttr.setXYZ(
         i,
-        color.x * alpha * brightness,
-        color.y * alpha * brightness,
-        color.z * alpha * brightness
+        color.x * alpha * colorBoost,
+        color.y * alpha * colorBoost,
+        color.z * alpha * colorBoost
       );
 
       baseColors[i * 3] = color.x;
@@ -139,42 +148,50 @@ export function createMicTrailRenderer(container) {
       baseColors[i * 3 + 2] = color.z;
     });
 
-    posAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
-    sizeAttr.needsUpdate = true;
+    staticPositionAttr.needsUpdate = true;
+    staticColorAttr.needsUpdate = true;
+    staticSizeAttr.needsUpdate = true;
+    staticAlphaAttr.needsUpdate = true;
   }
 
-  function createStaticPoints() {
-    brightnessUniform = uniform(1);
+  function createStaticSprites() {
+    staticPositionAttr = new THREE.InstancedBufferAttribute(
+      new Float32Array(DECOR_PARTICLE_COUNT * 3),
+      3
+    );
+    staticColorAttr = new THREE.InstancedBufferAttribute(
+      new Float32Array(DECOR_PARTICLE_COUNT * 3),
+      3
+    );
+    staticSizeAttr = new THREE.InstancedBufferAttribute(
+      new Float32Array(DECOR_PARTICLE_COUNT),
+      1
+    );
+    staticAlphaAttr = new THREE.InstancedBufferAttribute(
+      new Float32Array(DECOR_PARTICLE_COUNT),
+      1
+    );
 
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(DECOR_PARTICLE_COUNT * 3);
-    const colors = new Float32Array(DECOR_PARTICLE_COUNT * 3);
-    const pointSizes = new Float32Array(DECOR_PARTICLE_COUNT);
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('pointSize', new THREE.BufferAttribute(pointSizes, 1));
-
-    staticMaterial = new PointsNodeMaterial({
+    staticMaterial = new THREE.PointsNodeMaterial({
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
+      sizeAttenuation: false,
+      alphaTest: 0.02,
     });
-    staticMaterial.sizeNode = attribute('pointSize', 'float').mul(brightnessUniform);
-    staticMaterial.colorNode = attribute('color', 'vec3');
-    staticMaterial.opacityNode = float(1);
+    staticMaterial.positionNode = instancedBufferAttribute(staticPositionAttr);
+    staticMaterial.colorNode = instancedBufferAttribute(staticColorAttr);
+    staticMaterial.sizeNode = instancedBufferAttribute(staticSizeAttr, 'float');
+    staticMaterial.opacityNode = instancedBufferAttribute(staticAlphaAttr, 'float').mul(shapeCircle());
 
-    staticPoints = new THREE.Points(geometry, staticMaterial);
-    staticPoints.frustumCulled = false;
-    decorGroup.add(staticPoints);
+    staticSprites = new THREE.Sprite(staticMaterial);
+    staticSprites.count = DECOR_PARTICLE_COUNT;
+    staticSprites.frustumCulled = false;
+    decorGroup.add(staticSprites);
   }
 
   function applyStaticBrightness(level) {
-    brightness = THREE.MathUtils.clamp(level, 0.45, 1.55);
-    if (brightnessUniform) {
-      brightnessUniform.value = 0.82 + brightness * 0.28;
-    }
+    brightness = THREE.MathUtils.clamp(level, 0.85, 1.65);
     writeStaticGeometry();
   }
 
@@ -312,6 +329,7 @@ export function createMicTrailRenderer(container) {
     renderer = new THREE.WebGPURenderer({ antialias: true, alpha: false });
     renderer.setClearColor(0x000000);
     renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     container.innerHTML = '';
@@ -321,9 +339,9 @@ export function createMicTrailRenderer(container) {
     clock = new THREE.Clock();
 
     initParticleStates('idle');
-    createStaticPoints();
+    createStaticSprites();
     writeStaticGeometry();
-    staticPoints.visible = false;
+    staticSprites.visible = false;
 
     window.addEventListener('resize', onResize);
     return true;
@@ -333,6 +351,7 @@ export function createMicTrailRenderer(container) {
     if (!camera || !renderer) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
 
     if (mode !== 'landing') {
@@ -352,7 +371,7 @@ export function createMicTrailRenderer(container) {
     landingEngine.uniforms.colorBrightness.value = LANDING_COLOR_BRIGHTNESS;
     landingEngine.applyTrailToGPU(landingTrail);
 
-    staticPoints.visible = false;
+    staticSprites.visible = false;
     mode = 'landing';
     landingStartedAt = performance.now();
     worldSpinAngle = 0;
@@ -381,7 +400,7 @@ export function createMicTrailRenderer(container) {
   function showStaticDecor(nextPositionIndex, layoutName = 'idle') {
     positionIndex = nextPositionIndex;
     mode = 'static';
-    staticPoints.visible = true;
+    staticSprites.visible = true;
     queueLayoutTransition(layoutName);
     applyStaticBrightness(1);
     if (!loopRunning) startLoop();
@@ -402,7 +421,7 @@ export function createMicTrailRenderer(container) {
     liveFrequencyData = frequencyData;
     liveWaveformData = waveformData;
     mode = 'recording';
-    staticPoints.visible = true;
+    staticSprites.visible = true;
     setScreenLayout('recording');
     if (!loopRunning) startLoop();
   }

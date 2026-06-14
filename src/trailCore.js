@@ -286,8 +286,8 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
       particlePositions.element(instanceIndex).xyz.assign(vec3(10000.0));
       particlePositions.element(instanceIndex).w.assign(-1.0);
 
-      particleColors.element(instanceIndex).xyz.assign(vec3(1.0));
-      particleColors.element(instanceIndex).w.assign(1.0);
+      particleColors.element(instanceIndex).xyz.assign(vec3(0.0));
+      particleColors.element(instanceIndex).w.assign(0.0);
 
       particleProperties.element(instanceIndex).x.assign(1.0);
       particleProperties.element(instanceIndex).y.assign(0.005);
@@ -390,6 +390,8 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     particleProperty.y.assign(spawnLinksWidth);
     particleProperty.z.assign(0.0);
 
+    const spawnReveal = instantReveal ? float(0.85) : float(0.80);
+
     const pos = mix(
       previousSpawnPosition,
       spawnPosition,
@@ -487,7 +489,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
       pos.add(cymaticOffset)
     );
 
-    particleProperty.w.assign(instantReveal ? float(1.0) : float(0.80));
+    particleProperty.w.assign(spawnReveal);
   })().compute(nbToSpawn.value).label('Spawn Particles');
 
   const particleQuadSize = 0.12;
@@ -501,20 +503,15 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   particleMaterial.rotationNode = atan(particleVelocities.toAttribute().y, particleVelocities.toAttribute().x);
 
   particleMaterial.colorNode = Fn(() => {
-    const life = particlePositions.toAttribute().w;
-    const reveal = particleProperties.toAttribute().w;
-    const liveBrightness = vividColors
-      ? colorBrightness.mul(0.95)
-      : colorBrightness.mul(0.65).add(0.35);
-
     const color = vividColors
       ? getInstanceColor(instanceIndex)
       : particleColors.toAttribute().xyz;
 
-    return color
-      .mul(life)
-      .mul(reveal)
-      .mul(liveBrightness);
+    const liveBrightness = vividColors
+      ? colorBrightness
+      : colorBrightness.mul(0.65).add(0.35);
+
+    return color.mul(liveBrightness);
   })();
 
   particleMaterial.opacityNode = Fn(() => {
