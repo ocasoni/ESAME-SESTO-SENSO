@@ -130,6 +130,11 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
 
     meta.lastId += 1;
 
+    const positionIndexRaw = req.body?.positionIndex;
+    const positionIndex = Number.isFinite(Number(positionIndexRaw))
+      ? Number(positionIndexRaw)
+      : null;
+
     const entry = {
       id: meta.lastId,
       filename: req.file.filename,
@@ -137,6 +142,7 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
       mimeType: req.file.mimetype,
       size: req.file.size,
       createdAt: new Date().toISOString(),
+      positionIndex,
     };
 
     meta.uploads.push(entry);
@@ -151,6 +157,7 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
     res.json({
       ok: true,
       id: entry.id,
+      positionIndex: entry.positionIndex,
       telegramSent,
     });
   } catch (error) {

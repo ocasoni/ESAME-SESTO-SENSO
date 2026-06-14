@@ -1,81 +1,144 @@
-import { runMicSplash } from './mic-splash.js';
+import { createMicTrailRenderer } from './mic-trail.js';
 
 const params = new URLSearchParams(window.location.search);
 const API_URL = (params.get('api') || '').replace(/\/$/, '');
 const UPLOAD_SECRET = params.get('secret') || '';
-const MAX_SECONDS = 30;
+const RECORD_SECONDS = 20;
 
-const pageEl = document.querySelector('.mic-page');
-const statusEl = document.getElementById('mic-status');
-const timerEl = document.getElementById('mic-timer');
-const hintEl = document.getElementById('mic-hint');
-const recordBtn = document.getElementById('mic-record');
-const stopBtn = document.getElementById('mic-stop');
-const sendBtn = document.getElementById('mic-send');
+const uiEl = document.getElementById('mic-ui');
+const messageEl = document.getElementById('mic-message');
+const progressEl = document.getElementById('mic-progress');
+const actionBtn = document.getElementById('mic-action');
+const canvasEl = document.getElementById('mic-canvas');
 
+const COPY = {
+  idle: {
+    message:
+      'Respira vicino al microfono del telefono.\nQuando sentirai una vibrazione,\nla registrazione sarà completa.',
+    action: 'registra il tuo respiro',
+  },
+  recording: {
+    message: '',
+    action: 'respira…',
+  },
+  uploading: {
+    message: 'Il tuo respiro prende forma…',
+    action: 'inviato',
+  },
+  sent: {
+    message: "L'eco del tuo respiro è ora traccia visibile",
+    action: 'registra ancora',
+  },
+  error: {
+    message: 'Impossibile connettersi al backend.',
+    action: 'riprova',
+  },
+};
+
+let state = 'boot';
 let mediaRecorder = null;
 let mediaStream = null;
+let audioContext = null;
+let analyser = null;
+let frequencyData = null;
+let waveformData = null;
 let chunks = [];
 let recordedBlob = null;
-let timerInterval = null;
-let startedAt = 0;
+let progressInterval = null;
+let recordStartedAt = 0;
+let pendingPositionIndex = 0;
+let trailRenderer = null;
 
-function setRecordingVisual(active) {
-  pageEl.classList.toggle('is-recording', active);
+function setState(nextState) {
+  state = nextState;
+  uiEl.classList.remove('is-recording', 'is-uploading', 'is-sent', 'is-error');
+
+  if (nextState === 'recording') uiEl.classList.add('is-recording');
+  if (nextState === 'uploading') uiEl.classList.add('is-uploading');
+  if (nextState === 'sent') uiEl.classList.add('is-sent');
+  if (nextState === 'error') uiEl.classList.add('is-error');
+
+  const copy = COPY[nextState] || COPY.idle;
+  messageEl.textContent = copy.message;
+  actionBtn.textContent = copy.action;
+  actionBtn.disabled = nextState === 'boot' || nextState === 'uploading';
+
+  if (nextState !== 'recording') {
+    progressEl.style.width = nextState === 'uploading' ? '100%' : '0%';
+  }
 }
 
-function setStatus(text, className = '') {
-  statusEl.textContent = text;
-  statusEl.className = `mic-status ${className}`.trim();
+function showUi() {
+  uiEl.classList.add('is-visible');
+  uiEl.classList.remove('is-landing');
 }
 
-function formatTime(seconds) {
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
-  const ss = String(Math.floor(seconds % 60)).padStart(2, '0');
-  return `${mm}:${ss}`;
+function setProgress(ratio) {
+  progressEl.style.width = `${Math.min(100, Math.max(0, ratio * 100))}%`;
 }
 
-function resetTimer() {
-  clearInterval(timerInterval);
-  timerInterval = null;
-  timerEl.textContent = '00:00';
-}
+async function resolveNextPositionIndex() {
+  if (!API_URL) return 0;
 
-function startTimer() {
-  startedAt = Date.now();
-  timerInterval = setInterval(() => {
-    const elapsed = (Date.now() - startedAt) / 1000;
-    timerEl.textContent = formatTime(elapsed);
-
-    if (elapsed >= MAX_SECONDS) {
-      stopRecording();
-    }
-  }, 200);
+  try {
+    const response = await fetch(`${API_URL}/latest?since=0`);
+    if (!response.ok) return 0;
+    const data = await response.json();
+    return (data.latestId + 1) % 14;
+  } catch {
+    return 0;
+  }
 }
 
 async function ensureApiConfigured() {
   if (!API_URL) {
-    setStatus('URL backend mancante', 'is-error');
-    hintEl.textContent = 'Apri questa pagina scansionando il QR code dalla visualizzazione sul PC.';
-    recordBtn.disabled = true;
+    setState('error');
+    messageEl.textContent = 'Apri questa pagina scansionando il QR code dal PC.';
+    actionBtn.disabled = true;
     return false;
   }
 
   try {
     const response = await fetch(`${API_URL}/health`);
     if (!response.ok) throw new Error('Backend non raggiungibile');
-    setStatus('Pronto', 'is-ready');
-    hintEl.textContent = 'Premi Registra, parla o respira, poi Ferma e Invia.';
     return true;
   } catch {
-    setStatus('Backend non raggiungibile', 'is-error');
-    hintEl.textContent = `Verifica che il server sia attivo: ${API_URL}`;
+    setState('error');
+    messageEl.textContent = `Backend non raggiungibile.\nVerifica: ${API_URL}`;
     return false;
   }
 }
 
+function stopMedia() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+  }
+
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close().catch(() => {});
+  }
+
+  audioContext = null;
+  analyser = null;
+  clearInterval(progressInterval);
+  progressInterval = null;
+}
+
+function vibrateDone() {
+  if ('vibrate' in navigator) {
+    navigator.vibrate([120, 60, 120]);
+  }
+}
+
 async function startRecording() {
-  if (!API_URL) return;
+  if (state === 'recording' || state === 'uploading' || !API_URL) return;
+
+  pendingPositionIndex = await resolveNextPositionIndex();
 
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -88,6 +151,20 @@ async function startRecording() {
       video: false,
     });
 
+    audioContext = new AudioContext();
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    const source = audioContext.createMediaStreamSource(mediaStream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.86;
+    source.connect(analyser);
+
+    frequencyData = new Uint8Array(analyser.frequencyBinCount);
+    waveformData = new Uint8Array(analyser.fftSize);
+
     chunks = [];
     recordedBlob = null;
 
@@ -99,33 +176,51 @@ async function startRecording() {
     mediaRecorder.addEventListener('dataavailable', (event) => {
       if (event.data.size > 0) chunks.push(event.data);
     });
-
     mediaRecorder.addEventListener('stop', () => {
       recordedBlob = new Blob(chunks, { type: mimeType });
-      sendBtn.disabled = false;
-      setRecordingVisual(false);
-      setStatus('Registrazione pronta per l\'invio', 'is-ready');
-      hintEl.textContent = 'Premi Invia per mandare l\'audio alla visualizzazione.';
     });
 
     mediaRecorder.start(250);
-    setRecordingVisual(true);
-    setStatus('Registrazione in corso…', 'is-recording');
-    recordBtn.disabled = true;
-    stopBtn.disabled = false;
-    sendBtn.disabled = true;
-    startTimer();
+    recordStartedAt = Date.now();
+    setState('recording');
+    setProgress(0);
+
+    trailRenderer?.startRecording(
+      analyser,
+      frequencyData,
+      waveformData,
+      pendingPositionIndex
+    );
+
+    progressInterval = setInterval(() => {
+      const elapsed = (Date.now() - recordStartedAt) / 1000;
+      setProgress(elapsed / RECORD_SECONDS);
+
+      if (elapsed >= RECORD_SECONDS) {
+        finishRecording();
+      }
+    }, 100);
   } catch (error) {
     console.error(error);
-    setRecordingVisual(false);
-    setStatus('Permesso microfono negato', 'is-error');
-    hintEl.textContent = 'Consenti l\'accesso al microfono nelle impostazioni del browser.';
+    stopMedia();
+    setState('error');
+    messageEl.textContent = 'Consenti l\'accesso al microfono nelle impostazioni del browser.';
   }
 }
 
-function stopRecording() {
+async function finishRecording() {
+  if (state !== 'recording') return;
+
+  clearInterval(progressInterval);
+  progressInterval = null;
+  setProgress(1);
+  vibrateDone();
+
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+    await new Promise((resolve) => {
+      mediaRecorder.addEventListener('stop', resolve, { once: true });
+      mediaRecorder.stop();
+    });
   }
 
   if (mediaStream) {
@@ -133,19 +228,20 @@ function stopRecording() {
     mediaStream = null;
   }
 
-  resetTimer();
-  recordBtn.disabled = false;
-  stopBtn.disabled = true;
+  setState('uploading');
+  trailRenderer?.startUploading(pendingPositionIndex);
+  await sendRecording();
 }
 
 async function sendRecording() {
-  if (!recordedBlob || !API_URL) return;
-
-  sendBtn.disabled = true;
-  setStatus('Invio in corso…', '');
+  if (!recordedBlob || !API_URL) {
+    setState('error');
+    return;
+  }
 
   const formData = new FormData();
   formData.append('audio', recordedBlob, `respiro-${Date.now()}.webm`);
+  formData.append('positionIndex', String(pendingPositionIndex));
 
   try {
     const headers = {};
@@ -165,35 +261,46 @@ async function sendRecording() {
       throw new Error(data.error || 'Upload fallito');
     }
 
-    setStatus('Inviato!', 'is-ready');
-    hintEl.textContent = 'Puoi registrare un altro respiro.';
     recordedBlob = null;
-    sendBtn.disabled = true;
+    setState('sent');
+    trailRenderer?.showSent(pendingPositionIndex);
   } catch (error) {
     console.error(error);
-    setStatus('Errore di invio', 'is-error');
-    hintEl.textContent = error.message;
-    sendBtn.disabled = false;
+    setState('error');
+    messageEl.textContent = error.message;
+    actionBtn.disabled = false;
   }
 }
 
-recordBtn.addEventListener('click', startRecording);
-stopBtn.addEventListener('click', stopRecording);
-sendBtn.addEventListener('click', sendRecording);
+actionBtn.addEventListener('click', () => {
+  if (state === 'idle' || state === 'sent') {
+    startRecording();
+    return;
+  }
 
-function showMicPage() {
-  document.getElementById('mic-splash')?.remove();
-  pageEl.classList.add('is-visible');
-  ensureApiConfigured();
+  if (state === 'error') {
+    boot();
+  }
+});
+
+async function boot() {
+  setState('boot');
+  uiEl.classList.add('is-landing');
+
+  trailRenderer = createMicTrailRenderer(canvasEl);
+  const ready = await trailRenderer.init();
+
+  if (ready) {
+    await trailRenderer.runLanding();
+    trailRenderer.startAmbient();
+  }
+
+  const apiOk = await ensureApiConfigured();
+  if (apiOk) {
+    setState('idle');
+  }
+
+  showUi();
 }
 
-const splashSafetyTimer = window.setTimeout(showMicPage, 10000);
-
-runMicSplash()
-  .catch((error) => {
-    console.warn('Splash interrotta:', error);
-  })
-  .finally(() => {
-    window.clearTimeout(splashSafetyTimer);
-    showMicPage();
-  });
+boot();

@@ -765,7 +765,10 @@ async function handleNewPhoneUpload(upload) {
 
     simulationPaused = false;
 
-    const { slot, positionIndex } = prepareSlotForNewTrail();
+    const { slot, positionIndex: allocatedIndex } = prepareSlotForNewTrail();
+    const positionIndex = Number.isFinite(upload.positionIndex)
+      ? upload.positionIndex
+      : allocatedIndex;
 
     const trail = createTrail(activeTrailNumber, slot, positionIndex);
     activeTrailNumber += 1;
