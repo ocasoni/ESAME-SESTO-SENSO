@@ -239,21 +239,31 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   const appearanceAudioHigh = uniform(0.0);
   const appearanceAudioLevel = uniform(0.0);
   const appearanceRecording = uniform(0.0);
+  const appearanceWave0 = uniform(0.0);
+  const appearanceWave1 = uniform(0.0);
+  const appearanceWave2 = uniform(0.0);
+  const appearanceWaveActive = uniform(1.0);
 
   let particleAppearanceAttr = null;
   let sparkleIntensityAttr = null;
+  let particleRibbonAttr = null;
   let particleAppearance = null;
   let sparkleIntensity = null;
+  let particleRibbonData = null;
   let appearanceData = null;
   let sparkleIntensityData = null;
+  let ribbonData = null;
 
   if (staticTwinkle) {
     appearanceData = new Float32Array(nbParticles * 4);
     sparkleIntensityData = new Float32Array(nbParticles);
+    ribbonData = new Float32Array(nbParticles * 2);
     particleAppearanceAttr = new THREE.StorageInstancedBufferAttribute(appearanceData, 4);
     sparkleIntensityAttr = new THREE.StorageInstancedBufferAttribute(sparkleIntensityData, 1);
+    particleRibbonAttr = new THREE.StorageInstancedBufferAttribute(ribbonData, 2);
     particleAppearance = storage(particleAppearanceAttr, 'vec4', nbParticles);
     sparkleIntensity = storage(sparkleIntensityAttr, 'float', nbParticles);
+    particleRibbonData = storage(particleRibbonAttr, 'vec2', nbParticles);
   }
 
   const runtime = {
@@ -371,13 +381,44 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 
       If(life.greaterThan(0.0), () => {
         If(frozen.greaterThan(0.5), () => {
-          particleColors.element(particleIndex).xyz.assign(getInstanceColor(particleIndex));
+          const baseColor = getInstanceColor(particleIndex);
 
           const meta = particleAppearance.element(particleIndex);
           const phase = meta.x;
           const speed = meta.y;
           const strength = meta.z;
           const ribbonT = meta.w;
+
+          const ribbonMeta = particleRibbonData.element(particleIndex);
+          const ribbonIdx = ribbonMeta.x;
+          const curveProx = ribbonMeta.y;
+
+          const onRibbon1 = step(0.5, ribbonIdx).mul(step(ribbonIdx, 1.5));
+          const onRibbon2 = step(1.5, ribbonIdx);
+          const waveHead = mix(
+            mix(appearanceWave0, appearanceWave1, onRibbon1),
+            appearanceWave2,
+            onRibbon2
+          );
+
+          const relativePos = ribbonT.sub(waveHead);
+          const approachDist = relativePos.clamp(0.0, 1.0);
+          const approach = float(1.0)
+            .sub(approachDist.div(0.045))
+            .clamp(0.0, 1.0)
+            .mul(0.18);
+          const crest = float(1.0)
+            .sub(abs(relativePos).div(0.055))
+            .clamp(0.0, 1.0);
+          const passedDist = relativePos.mul(-1.0).clamp(0.0, 1.0);
+          const afterglow = float(1.0)
+            .sub(passedDist.div(0.16))
+            .clamp(0.0, 1.0);
+          const afterglowFade = afterglow.mul(afterglow).mul(0.72);
+          const waveHit = max(crest, max(afterglowFade, approach)).mul(curveProx);
+          const waveAmount = waveHit.mul(appearanceWaveActive).clamp(0.0, 1.0);
+          const litColor = mix(baseColor, vec3(1.0, 1.0, 1.0), waveAmount.mul(0.96));
+          particleColors.element(particleIndex).xyz.assign(litColor);
 
           const sizeSeed = hash(particleIndex.toFloat());
           const isSmall = step(sizeSeed, 0.52);
@@ -389,17 +430,17 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
             .add(0.5);
           const twinkleBright = twSlow.mul(strength).add(twMid.mul(strength.mul(0.55)));
 
-          const bucketDur = float(0.68);
+          const bucketDur = float(0.5);
           const bucket = floor(appearanceTime.div(bucketDur));
           const localT = appearanceTime.sub(bucket.mul(bucketDur)).div(bucketDur);
           const sparklePick = hash(particleIndex.add(bucket.mul(113)));
-          const isSparkle = step(float(0.962), sparklePick);
-          const attack = localT.div(0.11).clamp(0.0, 1.0);
-          const release = float(1.0).sub(localT.sub(0.11).div(0.89).clamp(0.0, 1.0));
+          const isSparkle = step(float(0.93), sparklePick);
+          const attack = localT.div(0.08).clamp(0.0, 1.0);
+          const release = float(1.0).sub(localT.sub(0.08).div(0.92).clamp(0.0, 1.0));
           const sparkleEnv = min(attack, release);
           const sparkleGpu = isSparkle
             .mul(sparkleEnv)
-            .mul(strength.mul(6.5).add(0.22))
+            .mul(strength.mul(16.0).add(0.75))
             .mul(float(1.0).sub(appearanceRecording));
 
           const midWeight = float(1.0).sub(abs(ribbonT.sub(0.5).mul(2.0))).clamp(0.0, 1.0);
@@ -417,12 +458,20 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
             .add(breathLift)
             .mul(appearanceRecording);
 
-          const sparkleBright = sparkleIntensity.element(particleIndex).add(sparkleGpu);
-          const finalBright = float(0.34)
-            .add(twinkleBright.mul(2.2))
-            .add(sparkleBright)
+          const sparkleTotal = sparkleIntensity.element(particleIndex).add(sparkleGpu);
+          const sparkleNorm = sparkleTotal.div(1.25).clamp(0.0, 1.0);
+          const twinkleSize = float(1.0).add(twinkleBright.mul(0.28));
+          const sparkleSizeMul = float(1.0).add(sparkleNorm.mul(2.0));
+          const waveSizeMul = float(1.0).add(waveAmount.mul(1.1));
+          const finalSize = particleSize.mul(twinkleSize.mul(sparkleSizeMul).mul(waveSizeMul));
+          particleProperties.element(particleIndex).x.assign(finalSize);
+
+          const finalBright = float(0.3)
+            .add(twinkleBright.mul(2.4))
+            .add(sparkleTotal.mul(1.45))
             .add(audioBright)
-            .clamp(0.12, 3.0);
+            .add(waveAmount.mul(2.2))
+            .clamp(0.12, 3.8);
 
           particleColors.element(particleIndex).w.assign(finalBright);
         });
@@ -630,7 +679,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
 
     if (staticTwinkle) {
       const appearance = particleColors.toAttribute().w;
-      const opacityBoost = appearance.mul(0.72).add(0.28).clamp(0.22, 1.0);
+      const opacityBoost = appearance.mul(0.88).add(0.12).clamp(0.18, 1.0);
       return opacity.mul(opacityBoost);
     }
 
@@ -852,9 +901,22 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     appearanceData[offset + 3] = ribbonT;
   }
 
+  function setStaticRibbonMeta(particleIndex, ribbonIndex, curveProx) {
+    if (!staticTwinkle || !ribbonData) return;
+
+    const offset = particleIndex * 2;
+    ribbonData[offset] = ribbonIndex;
+    ribbonData[offset + 1] = curveProx;
+  }
+
   function commitStaticParticleMeta() {
     if (!staticTwinkle || !particleAppearanceAttr) return;
     particleAppearanceAttr.needsUpdate = true;
+  }
+
+  function commitStaticRibbonMeta() {
+    if (!staticTwinkle || !particleRibbonAttr) return;
+    particleRibbonAttr.needsUpdate = true;
   }
 
   function setSparkleIntensities(entries) {
@@ -873,7 +935,19 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     renderer.compute(freezeStaticSlot);
   }
 
-  function applyStaticAppearance(trail, timeSec, { low = 0, mid = 0, high = 0, level = 0, recording = 0 } = {}) {
+  function applyStaticAppearance(
+    trail,
+    timeSec,
+    {
+      low = 0,
+      mid = 0,
+      high = 0,
+      level = 0,
+      recording = 0,
+      waveHeads = [0, 0, 0],
+      waveActive = 1,
+    } = {}
+  ) {
     if (!staticTwinkle || !updateStaticAppearance) return;
 
     currentTrailParticleStart.value = trail.particleStart;
@@ -883,6 +957,10 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     appearanceAudioHigh.value = high;
     appearanceAudioLevel.value = level;
     appearanceRecording.value = recording;
+    appearanceWave0.value = waveHeads[0] ?? 0;
+    appearanceWave1.value = waveHeads[1] ?? 0;
+    appearanceWave2.value = waveHeads[2] ?? 0;
+    appearanceWaveActive.value = waveActive;
     renderer.compute(updateStaticAppearance);
   }
 
@@ -896,7 +974,9 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     updateAudioDrivenPosition,
     tickTrail,
     setStaticParticleMeta,
+    setStaticRibbonMeta,
     commitStaticParticleMeta,
+    commitStaticRibbonMeta,
     setSparkleIntensities,
     freezeStaticParticles,
     applyStaticAppearance,

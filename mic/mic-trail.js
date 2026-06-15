@@ -17,6 +17,8 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const LANDING_MS = 5200;
 const LANDING_TAIL_MS = 1800;
 const PALETTE_BLEND_MS = 1800;
+const RIBBON_WAVE_SPEED = 0.055;
+const RIBBON_WAVE_OFFSETS = [0, 0.27, 0.58];
 
 const MIC_SETTINGS = {
   inputGain: 5.5,
@@ -117,7 +119,7 @@ function cubicBezierNorm(t, p0, p1, p2, p3) {
   };
 }
 
-function spawnRibbonAlongBezier(trail, ribbon, camera, engine, homeParticles, uniqueIndices) {
+function spawnRibbonAlongBezier(trail, ribbon, camera, engine, homeParticles, uniqueIndices, ribbonIndex) {
   const { p0, p1, p2, p3, steps, breathOffset } = ribbon;
   const anchor = trail.position.clone();
 
@@ -144,13 +146,19 @@ function spawnRibbonAlongBezier(trail, ribbon, camera, engine, homeParticles, un
     const spawnCount = Math.round(engine.uniforms.nbToSpawn.value);
     for (let p = 0; p < spawnCount; p += 1) {
       const idx = (spawnBefore + p) % particlesPerTrail;
+      const along = spawnCount > 1 ? p / (spawnCount - 1) : 0.5;
+      const curveT = t0 + (t1 - t0) * along;
+      const radial = Math.random();
+      const curveProx = THREE.MathUtils.clamp(1 - Math.pow(radial, 0.52) * 0.92, 0.06, 1);
+
       engine.setStaticParticleMeta(
         idx,
         Math.random() * Math.PI * 2,
-        0.45 + Math.random() * 1.15,
-        0.08 + Math.random() * 0.24,
-        t1
+        0.55 + Math.random() * 1.25,
+        0.1 + Math.random() * 0.28,
+        curveT
       );
+      engine.setStaticRibbonMeta(idx, ribbonIndex, curveProx);
       homeParticles.push({ index: idx });
       uniqueIndices.add(idx);
     }
@@ -194,6 +202,7 @@ export function createMicTrailRenderer(container) {
   let smoothedAudioMid = 0;
   let smoothedAudioHigh = 0;
   let smoothedBreathLevel = 0;
+  let ribbonWaveHeads = RIBBON_WAVE_OFFSETS.slice();
   let homeFade = 0;
   let homeFadeTarget = 1;
   let homeFadeStart = 0;
@@ -247,16 +256,25 @@ export function createMicTrailRenderer(container) {
     return THREE.MathUtils.lerp(homeFade, homeFadeTarget, eased);
   }
 
+  function updateRibbonWaves(delta) {
+    for (let i = 0; i < ribbonWaveHeads.length; i += 1) {
+      ribbonWaveHeads[i] = (ribbonWaveHeads[i] + delta * RIBBON_WAVE_SPEED) % 1;
+    }
+  }
+
   function sparkleEnvelope(sparkle, now) {
     const duration = sparkle.end - sparkle.start;
     const t = (now - sparkle.start) / duration;
     if (t >= 1) return 0;
 
-    const attack = 0.1;
-    if (t < attack) return (t / attack) * sparkle.peak;
+    const attack = 0.07;
+    if (t < attack) {
+      const swell = t / attack;
+      return swell * swell * sparkle.peak;
+    }
 
     const decay = 1 - (t - attack) / (1 - attack);
-    return sparkle.peak * decay * decay;
+    return sparkle.peak * decay * decay * decay;
   }
 
   function updateHomeSparkles(now) {
@@ -264,11 +282,11 @@ export function createMicTrailRenderer(container) {
 
     if (
       uniqueHomeIndices.size > 0 &&
-      activeSparkles.length < 12 &&
-      now - lastSparkleRoll > 220 + Math.random() * 420
+      activeSparkles.length < 20 &&
+      now - lastSparkleRoll > 120 + Math.random() * 260
     ) {
       lastSparkleRoll = now;
-      const picks = 1 + Math.floor(Math.random() * 3);
+      const picks = 2 + Math.floor(Math.random() * 4);
       const indices = Array.from(uniqueHomeIndices);
 
       for (let i = 0; i < picks; i += 1) {
@@ -276,8 +294,8 @@ export function createMicTrailRenderer(container) {
         activeSparkles.push({
           index,
           start: now,
-          end: now + 520 + Math.random() * 780,
-          peak: 0.18 + Math.random() * 0.48,
+          end: now + 380 + Math.random() * 620,
+          peak: 0.55 + Math.random() * 0.95,
         });
       }
     }
@@ -303,6 +321,7 @@ export function createMicTrailRenderer(container) {
     let audioHigh = 0;
     let audioLevel = 0;
     let recording = 0;
+    let waveActive = 1;
 
     if (pulse && liveAnalyser) {
       const frame = getMicBreathFrame(liveAnalyser, liveFrequencyData, liveWaveformData);
@@ -315,7 +334,10 @@ export function createMicTrailRenderer(container) {
       audioMid = Math.min(1, smoothedAudioMid * 0.75 + smoothedBreathLevel * 0.35);
       audioHigh = smoothedAudioHigh;
       recording = 1;
+      waveActive = 0;
     } else {
+      updateRibbonWaves(delta);
+
       smoothedBreathLevel = THREE.MathUtils.lerp(smoothedBreathLevel, 0, 0.05);
       smoothedAudioLow = THREE.MathUtils.lerp(smoothedAudioLow, 0, 0.05);
       smoothedAudioMid = THREE.MathUtils.lerp(smoothedAudioMid, 0, 0.05);
@@ -335,6 +357,8 @@ export function createMicTrailRenderer(container) {
       high: audioHigh,
       level: audioLevel,
       recording,
+      waveHeads: ribbonWaveHeads,
+      waveActive,
     });
 
     renderer.compute(engine.updateParticles);
@@ -477,6 +501,7 @@ export function createMicTrailRenderer(container) {
     activeSparkles = [];
     lastSparkleRoll = performance.now();
     homeTime = 0;
+    ribbonWaveHeads = RIBBON_WAVE_OFFSETS.slice();
     smoothedAudioLow = 0;
     smoothedAudioMid = 0;
     smoothedAudioHigh = 0;
@@ -491,11 +516,20 @@ export function createMicTrailRenderer(container) {
     paletteIndex = positionIndex;
     targetPaletteIndex = positionIndex;
 
-    for (const ribbon of MIC_RIBBONS) {
-      spawnRibbonAlongBezier(trail, ribbon, camera, engine, homeParticles, uniqueHomeIndices);
+    for (let ribbonIndex = 0; ribbonIndex < MIC_RIBBONS.length; ribbonIndex += 1) {
+      spawnRibbonAlongBezier(
+        trail,
+        MIC_RIBBONS[ribbonIndex],
+        camera,
+        engine,
+        homeParticles,
+        uniqueHomeIndices,
+        ribbonIndex
+      );
     }
 
     engine.commitStaticParticleMeta();
+    engine.commitStaticRibbonMeta();
     engine.freezeStaticParticles(trail);
 
     staticReady = true;
