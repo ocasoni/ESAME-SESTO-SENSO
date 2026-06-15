@@ -6,9 +6,9 @@ import {
   createLandingTrail,
   createTrail,
   createTrailEngine,
-  getBreathFrameFromAnalyser,
   particlesPerTrail,
 } from '../src/trailCore.js';
+import { analyzeBreathFrame } from '../src/audioFromUpload.js';
 
 const CAMERA_FOV = 59;
 const CAMERA_DISTANCE = 20;
@@ -19,12 +19,47 @@ const LANDING_TAIL_MS = 1800;
 const PALETTE_BLEND_MS = 1800;
 
 const MIC_SETTINGS = {
-  inputGain: 4.0,
-  breathSensitivity: 18.0,
-  lowSensitivity: 4.0,
-  midSensitivity: 4.5,
-  highSensitivity: 7.0,
+  inputGain: 5.5,
+  breathSensitivity: 32.0,
+  lowSensitivity: 16.0,
+  midSensitivity: 9.0,
+  highSensitivity: 6.0,
+  ultraLowSensitivity: 22.0,
 };
+
+function amplifyBreathSignal(value, { gain = 1, gamma = 0.68, floor = 0.015 } = {}) {
+  const cleaned = Math.max(0, value - floor);
+  return THREE.MathUtils.clamp(Math.pow(cleaned / Math.max(0.001, 1 - floor), gamma) * gain, 0, 1);
+}
+
+function getMicBreathFrame(analyser, frequencyData, waveformData) {
+  analyser.getByteFrequencyData(frequencyData);
+  analyser.getByteTimeDomainData(waveformData);
+
+  const frame = analyzeBreathFrame(frequencyData, waveformData, MIC_SETTINGS);
+
+  let ultraLow = 0;
+  const ultraLowEnd = Math.max(2, Math.floor(frequencyData.length * 0.055));
+  for (let i = 0; i < ultraLowEnd; i += 1) {
+    const v = frequencyData[i] / 255;
+    ultraLow += v * v;
+  }
+  ultraLow = Math.sqrt(ultraLow / ultraLowEnd);
+  ultraLow = Math.min(1, ultraLow * MIC_SETTINGS.ultraLowSensitivity);
+
+  const level = amplifyBreathSignal(frame.level, { gain: 2.4 });
+  const lowBand = amplifyBreathSignal(
+    Math.min(1, frame.lowBand * 0.5 + ultraLow * 0.75 + frame.level * 0.45),
+    { gain: 2.2 }
+  );
+  const midBand = amplifyBreathSignal(
+    Math.min(1, frame.midBand * 0.55 + frame.level * 0.35 + lowBand * 0.2),
+    { gain: 1.6 }
+  );
+  const highBand = amplifyBreathSignal(frame.highBand, { gain: 1.1, gamma: 0.82 });
+
+  return { level, lowBand, midBand, highBand };
+}
 
 const MIC_RIBBONS = [
   {
@@ -158,6 +193,7 @@ export function createMicTrailRenderer(container) {
   let smoothedAudioLow = 0;
   let smoothedAudioMid = 0;
   let smoothedAudioHigh = 0;
+  let smoothedBreathLevel = 0;
   let homeFade = 0;
   let homeFadeTarget = 1;
   let homeFadeStart = 0;
@@ -265,23 +301,22 @@ export function createMicTrailRenderer(container) {
     let audioLow = 0;
     let audioMid = 0;
     let audioHigh = 0;
+    let audioLevel = 0;
     let recording = 0;
 
     if (pulse && liveAnalyser) {
-      const frame = getBreathFrameFromAnalyser(
-        liveAnalyser,
-        liveFrequencyData,
-        liveWaveformData,
-        MIC_SETTINGS
-      );
-      smoothedAudioLow = THREE.MathUtils.lerp(smoothedAudioLow, frame.lowBand, 0.12);
-      smoothedAudioMid = THREE.MathUtils.lerp(smoothedAudioMid, frame.midBand, 0.12);
-      smoothedAudioHigh = THREE.MathUtils.lerp(smoothedAudioHigh, frame.highBand, 0.12);
-      audioLow = smoothedAudioLow;
-      audioMid = smoothedAudioMid;
+      const frame = getMicBreathFrame(liveAnalyser, liveFrequencyData, liveWaveformData);
+      smoothedBreathLevel = THREE.MathUtils.lerp(smoothedBreathLevel, frame.level, 0.28);
+      smoothedAudioLow = THREE.MathUtils.lerp(smoothedAudioLow, frame.lowBand, 0.26);
+      smoothedAudioMid = THREE.MathUtils.lerp(smoothedAudioMid, frame.midBand, 0.22);
+      smoothedAudioHigh = THREE.MathUtils.lerp(smoothedAudioHigh, frame.highBand, 0.18);
+      audioLevel = smoothedBreathLevel;
+      audioLow = Math.min(1, smoothedAudioLow * 0.82 + smoothedBreathLevel * 0.55);
+      audioMid = Math.min(1, smoothedAudioMid * 0.75 + smoothedBreathLevel * 0.35);
       audioHigh = smoothedAudioHigh;
       recording = 1;
     } else {
+      smoothedBreathLevel = THREE.MathUtils.lerp(smoothedBreathLevel, 0, 0.05);
       smoothedAudioLow = THREE.MathUtils.lerp(smoothedAudioLow, 0, 0.05);
       smoothedAudioMid = THREE.MathUtils.lerp(smoothedAudioMid, 0, 0.05);
       smoothedAudioHigh = THREE.MathUtils.lerp(smoothedAudioHigh, 0, 0.05);
@@ -298,6 +333,7 @@ export function createMicTrailRenderer(container) {
       low: audioLow,
       mid: audioMid,
       high: audioHigh,
+      level: audioLevel,
       recording,
     });
 
@@ -444,6 +480,7 @@ export function createMicTrailRenderer(container) {
     smoothedAudioLow = 0;
     smoothedAudioMid = 0;
     smoothedAudioHigh = 0;
+    smoothedBreathLevel = 0;
 
     trail = createTrail(0, 0, positionIndex);
     trail.mode = 'loop';
@@ -507,6 +544,7 @@ export function createMicTrailRenderer(container) {
     smoothedAudioLow = 0;
     smoothedAudioMid = 0;
     smoothedAudioHigh = 0;
+    smoothedBreathLevel = 0;
 
     if (!loopRunning) startLoop();
   }
@@ -517,6 +555,7 @@ export function createMicTrailRenderer(container) {
     smoothedAudioLow = 0;
     smoothedAudioMid = 0;
     smoothedAudioHigh = 0;
+    smoothedBreathLevel = 0;
     if (engine) {
       engine.uniforms.colorBrightness.value = baseBrightness;
     }

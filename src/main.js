@@ -61,7 +61,6 @@ let phoneUiElements = null;
 let camera, scene, renderer, controls, clock, light, worldGroup;
 let clearTrailParticlesCompute = null;
 let fadeTrailParticlesCompute = null;
-let sourceDot;
 let updateParticles, spawnParticles;
 let getInstanceColor;
 
@@ -319,17 +318,6 @@ async function init() {
   particleMesh.frustumCulled = false;
   worldGroup.add(particleMesh);
 
-  const sourceDotGeom = new THREE.SphereGeometry(0.035, 24, 24);
-  const sourceDotMaterial = new THREE.MeshBasicMaterial({
-    color: 0xff66ff,
-    transparent: true,
-    opacity: 1.0
-  });
-
-  sourceDot = new THREE.Mesh(sourceDotGeom, sourceDotMaterial);
-  sourceDot.frustumCulled = false;
-  worldGroup.add(sourceDot);
-
   updateParticles = Fn(() => {
     const position = particlePositions.element(instanceIndex).xyz;
     const life = particlePositions.element(instanceIndex).w;
@@ -577,31 +565,6 @@ function animate() {
     }
 
     audioIsPlaying = true;
-  }
-
-
-  if (sourceDot) {
-    if (displayTrail) {
-      sourceDot.position.copy(displayTrail.spawnPosition);
-    }
-
-    const sourcePulse = 1.0 + smoothedLevel * 1.8;
-    sourceDot.scale.setScalar(sourcePulse);
-
-    const brightness = THREE.MathUtils.clamp(colorBrightness.value, 0.6, 2.4);
-      if (displayTrail) {
-      const dotColor = new THREE.Color().setHSL(
-        displayTrail.hue,
-        displayTrail.saturation,
-        0.65
-      );
-
-      sourceDot.material.color.setRGB(
-        dotColor.r * brightness,
-        dotColor.g * brightness,
-        dotColor.b * brightness
-      );
-    }
   }
 
   if (audioIsPlaying) {

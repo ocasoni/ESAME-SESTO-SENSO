@@ -253,7 +253,7 @@ async function startRecording() {
     const source = audioContext.createMediaStreamSource(mediaStream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.86;
+    analyser.smoothingTimeConstant = 0.68;
     source.connect(analyser);
 
     frequencyData = new Uint8Array(analyser.frequencyBinCount);

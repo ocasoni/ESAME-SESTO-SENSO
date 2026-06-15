@@ -237,6 +237,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
   const appearanceAudioLow = uniform(0.0);
   const appearanceAudioMid = uniform(0.0);
   const appearanceAudioHigh = uniform(0.0);
+  const appearanceAudioLevel = uniform(0.0);
   const appearanceRecording = uniform(0.0);
 
   let particleAppearanceAttr = null;
@@ -402,13 +403,18 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
             .mul(float(1.0).sub(appearanceRecording));
 
           const midWeight = float(1.0).sub(abs(ribbonT.sub(0.5).mul(2.0))).clamp(0.0, 1.0);
-          const lowReact = appearanceAudioLow.mul(isLarge);
-          const midReact = appearanceAudioMid.mul(midWeight);
-          const highReact = appearanceAudioHigh.mul(isSmall);
+          const lowSpread = isLarge.mul(0.55).add(0.45);
+          const midSpread = midWeight.mul(0.6).add(0.4);
+          const highSpread = isSmall.mul(0.5).add(0.22);
+          const lowReact = appearanceAudioLow.mul(lowSpread);
+          const midReact = appearanceAudioMid.mul(midSpread);
+          const highReact = appearanceAudioHigh.mul(highSpread);
+          const breathLift = appearanceAudioLevel.mul(0.42);
           const audioBright = lowReact
-            .mul(0.34)
-            .add(midReact.mul(0.28))
-            .add(highReact.mul(0.22))
+            .mul(0.82)
+            .add(midReact.mul(0.52))
+            .add(highReact.mul(0.28))
+            .add(breathLift)
             .mul(appearanceRecording);
 
           const sparkleBright = sparkleIntensity.element(particleIndex).add(sparkleGpu);
@@ -867,7 +873,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     renderer.compute(freezeStaticSlot);
   }
 
-  function applyStaticAppearance(trail, timeSec, { low = 0, mid = 0, high = 0, recording = 0 } = {}) {
+  function applyStaticAppearance(trail, timeSec, { low = 0, mid = 0, high = 0, level = 0, recording = 0 } = {}) {
     if (!staticTwinkle || !updateStaticAppearance) return;
 
     currentTrailParticleStart.value = trail.particleStart;
@@ -875,6 +881,7 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
     appearanceAudioLow.value = low;
     appearanceAudioMid.value = mid;
     appearanceAudioHigh.value = high;
+    appearanceAudioLevel.value = level;
     appearanceRecording.value = recording;
     renderer.compute(updateStaticAppearance);
   }
