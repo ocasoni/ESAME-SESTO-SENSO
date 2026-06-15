@@ -156,7 +156,6 @@ body {
 .mic-message {
   margin: 0;
   max-width: 320px;
-  min-height: calc(0.92rem * 1.22 * 2);
   text-align: center;
   font-size: 0.92rem;
   line-height: 1.22;

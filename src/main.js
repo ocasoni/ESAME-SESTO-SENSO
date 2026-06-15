@@ -174,19 +174,19 @@ const turbFriction = uniform(0.08);
 const freezeLifeThreshold = uniform(0.90);
 
 const trajectoryParams = {
-  speed: 1.35,
-  smoothness: 0.12,
-  range: 4.2,
-  directionChange: 0.72,
+  speed: 1.15,
+  smoothness: 0.16,
+  range: 5.2,
+  directionChange: 0.35,
   forwardPush: 1.0
 };
 
 const microphoneSettings = {
-  inputGain: 4.0,
-  breathSensitivity: 18.0,
-  lowSensitivity: 4.0,
-  midSensitivity: 4.5,
-  highSensitivity: 7.0
+  inputGain: 8.0,
+  breathSensitivity: 42.0,
+  lowSensitivity: 5.5,
+  midSensitivity: 6.5,
+  highSensitivity: 8.0
 };
 
 init();
@@ -561,7 +561,9 @@ function animate() {
 
       renderer.compute(spawnParticles);
 
-      trail.spawnIndex = (trail.spawnIndex + nbToSpawn.value) % particlesPerTrail;
+      trail.spawnIndex = (
+        trail.spawnIndex + Math.max(1, Math.floor(nbToSpawn.value))
+      ) % particlesPerTrail;
     }
 
     audioIsPlaying = true;
@@ -1054,6 +1056,15 @@ function createTrail(index, slot, positionIndex) {
     smoothedHighBand: 0,
     previousFrequencyBalance: 0,
 
+    breathEnvelope: 0,
+    previousBreathEnvelope: 0,
+    breathDelta: 0,
+    breathPhase: 'pause',
+    breathPhaseAmount: 0,
+    breathCyclePhase: 0,
+    breathDirection: new THREE.Vector3(0, 1, 0),
+    breathSideDirection: new THREE.Vector3(1, 0, 0),
+
     recordElapsed: 0,
     loopElapsed: 0,
     recordedFrames: [],
@@ -1136,14 +1147,16 @@ function readBreathFrameFromAnalyser() {
   }
 
   const rms = Math.sqrt(sum / waveformData.length);
-  const noiseFloor = 0.006;
+  const noiseFloor = 0.0025;
   const cleanedRms = Math.max(0, rms - noiseFloor);
 
-  const level = THREE.MathUtils.clamp(
+  const rawLevel = THREE.MathUtils.clamp(
     cleanedRms * microphoneSettings.breathSensitivity,
     0,
     1
   );
+  
+  const level = Math.pow(rawLevel, 0.55);
 
   const breathStart = 1;
   const breathEnd = Math.floor(frequencyData.length * 0.035);
@@ -1184,11 +1197,27 @@ function readBreathFrameFromAnalyser() {
   midBand = THREE.MathUtils.clamp(midBand * microphoneSettings.midSensitivity, 0, 1);
   highBand = THREE.MathUtils.clamp(highBand * microphoneSettings.highSensitivity, 0, 1);
 
+  let weightedFrequencySum = 0;
+  let frequencyEnergySum = 0;
+  
+  for (let i = 1; i < frequencyData.length; i++) {
+    const value = frequencyData[i] / 255;
+    const energy = value * value;
+  
+    weightedFrequencySum += i * energy;
+    frequencyEnergySum += energy;
+  }
+  
+  const spectralCentroid = frequencyEnergySum > 0
+    ? weightedFrequencySum / frequencyEnergySum / frequencyData.length
+    : 0;
+  
   return {
     level,
     lowBand,
     midBand,
-    highBand
+    highBand,
+    spectralCentroid
   };
 }
 
@@ -1231,7 +1260,12 @@ function getLoopedBreathFrame(trail, delta) {
       level: THREE.MathUtils.lerp(a.level, b.level, mixAmount),
       lowBand: THREE.MathUtils.lerp(a.lowBand, b.lowBand, mixAmount),
       midBand: THREE.MathUtils.lerp(a.midBand, b.midBand, mixAmount),
-      highBand: THREE.MathUtils.lerp(a.highBand, b.highBand, mixAmount)
+      highBand: THREE.MathUtils.lerp(a.highBand, b.highBand, mixAmount),
+      spectralCentroid: THREE.MathUtils.lerp(
+        a.spectralCentroid || 0,
+        b.spectralCentroid || 0,
+        mixAmount
+      )
     };
   }
 
@@ -1239,7 +1273,8 @@ function getLoopedBreathFrame(trail, delta) {
     level: 0,
     lowBand: 0,
     midBand: 0,
-    highBand: 0
+    highBand: 0,
+    spectralCentroid: 0
   };
 }
 
@@ -1253,11 +1288,51 @@ function updateAudioDrivenPosition(trail, delta) {
   const midBand = breathFrame.midBand;
   const highBand = breathFrame.highBand;
 
-  trail.smoothedLevel = THREE.MathUtils.lerp(trail.smoothedLevel, level, 0.12);
+  const spectralCentroid = breathFrame.spectralCentroid || 0;
 
+  trail.smoothedLevel = THREE.MathUtils.lerp(trail.smoothedLevel, level, 0.12);
   smoothedLevel = trail.smoothedLevel;
 
-  audioPhase += delta * (0.65 + trail.smoothedLevel * 1.8);
+  trail.previousBreathEnvelope = trail.breathEnvelope;
+
+  // Envelope lenta: questa è la vera curva del respiro.
+  trail.breathEnvelope = THREE.MathUtils.lerp(
+    trail.breathEnvelope,
+    level,
+    0.045
+  );
+
+  // Delta: dice se il respiro sta crescendo o diminuendo.
+  trail.breathDelta = trail.breathEnvelope - trail.previousBreathEnvelope;
+
+  const inhaleThreshold = 0.00035;
+  const exhaleThreshold = -0.00035;
+  const silenceThreshold = 0.012;
+
+  if (trail.breathEnvelope < silenceThreshold) {
+    trail.breathPhase = 'pause';
+  } else if (trail.breathDelta > inhaleThreshold) {
+    trail.breathPhase = 'inhale';
+  } else if (trail.breathDelta < exhaleThreshold) {
+    trail.breathPhase = 'exhale';
+  } else {
+    trail.breathPhase = 'hold';
+  }
+
+  // Intensità della fase, utile per non avere cambi troppo secchi.
+  const phaseStrength = THREE.MathUtils.clamp(
+    Math.abs(trail.breathDelta) * 260,
+    0,
+    1
+  );
+
+  trail.breathPhaseAmount = THREE.MathUtils.lerp(
+    trail.breathPhaseAmount,
+    phaseStrength,
+    0.08
+  );
+
+  //audioPhase += delta * (0.65 + trail.smoothedLevel * 1.8);
 
   trail.smoothedLowBand = THREE.MathUtils.lerp(trail.smoothedLowBand, lowBand, 0.08);
   trail.smoothedMidBand = THREE.MathUtils.lerp(trail.smoothedMidBand, midBand, 0.08);
@@ -1267,11 +1342,11 @@ function updateAudioDrivenPosition(trail, delta) {
   smoothedMidBand = trail.smoothedMidBand;
   smoothedHighBand = trail.smoothedHighBand;
 
-  const totalFrequencyEnergy = THREE.MathUtils.clamp(
+  /*const totalFrequencyEnergy = THREE.MathUtils.clamp(
     smoothedLowBand + smoothedMidBand + smoothedHighBand,
     0,
     1
-  );
+  );*/
 
   const frequencyBalance =
     smoothedHighBand * 1.2 +
@@ -1279,6 +1354,7 @@ function updateAudioDrivenPosition(trail, delta) {
     smoothedLowBand * 0.9;
 
   const frequencyChange = frequencyBalance - trail.previousFrequencyBalance  ;
+
   trail.previousFrequencyBalance = THREE.MathUtils.lerp(
     trail.previousFrequencyBalance,
     frequencyBalance,
@@ -1286,27 +1362,61 @@ function updateAudioDrivenPosition(trail, delta) {
   );
 
     // Movimento quasi fermo quando il suono è calmo.
-  const motionAmount = THREE.MathUtils.smoothstep(totalFrequencyEnergy, 0.08, 0.55);
+  //const motionAmount = THREE.MathUtils.smoothstep(totalFrequencyEnergy, 0.08, 0.55);
 
   // La direzione non viene ricavata direttamente da una posizione circolare.
   // Qui l'audio piega una direzione persistente, così la scia continua
   // ad avanzare nello spazio invece di orbitare sempre intorno allo stesso punto.
-  trail.wanderPhase += delta * (
-    0.45 +
-    motionAmount * 1.35 +
-    smoothedHighBand * 1.4
-  ) * trajectoryParams.directionChange;
-
-  trail.targetDirection.set(
-    Math.sin(trail.wanderPhase * 0.73 + smoothedMidBand * 5.0),
-    Math.sin(trail.wanderPhase * 1.11 + frequencyBalance * 3.0),
-    Math.cos(trail.wanderPhase * 0.91 + smoothedLowBand * 4.0)
+  // Una fase ciclica lenta, sincronizzata al respiro.
+  // Non è più il motore principale casuale: serve solo a dare curvatura.
+  trail.breathCyclePhase += delta * (
+    0.25 +
+    trail.breathEnvelope * 1.2 +
+    trail.breathPhaseAmount * 0.8
   );
 
-  // I cambiamenti di spettro danno una sterzata, ma non resettano la traiettoria.
-  trail.targetDirection.x += frequencyChange * 3.0;
-  trail.targetDirection.y += (smoothedHighBand - smoothedLowBand) * 1.4;
-  trail.targetDirection.z += (smoothedMidBand - 0.25) * 1.2;
+  // Direzione principale del respiro.
+  // Inspirazione = sale/apre.
+  // Espirazione = scende/chiude.
+  // Pausa = quasi ferma.
+  const inhaleAmount = trail.breathPhase === 'inhale' ? trail.breathPhaseAmount : 0;
+  const exhaleAmount = trail.breathPhase === 'exhale' ? trail.breathPhaseAmount : 0;
+  const pauseAmount = trail.breathPhase === 'pause' || trail.breathPhase === 'hold' ? 1 : 0;
+
+  // Twist laterale controllato dallo spettro, non random puro.
+  const spectralTwist = THREE.MathUtils.clamp(
+    spectralCentroid * 2.4 + smoothedHighBand * 0.7,
+    0,
+    1
+  );
+
+  const sideWave = Math.sin(trail.breathCyclePhase * Math.PI * 2.0);
+  const depthWave = Math.cos(trail.breathCyclePhase * Math.PI * 2.0);
+
+  // Movimento molto leggibile:
+  trail.targetDirection.set(
+    sideWave * (0.15 + spectralTwist * 0.85),
+    inhaleAmount * 1.25 - exhaleAmount * 0.95,
+    depthWave * (0.12 + smoothedMidBand * 0.65)
+  );
+
+  // Durante la pausa, riduce la direzione invece di inventarne una nuova.
+  if (pauseAmount > 0) {
+    trail.targetDirection.multiplyScalar(0.15);
+  }
+
+  // Un po' di apertura laterale durante l'inspiro.
+  trail.targetDirection.x += inhaleAmount * sideWave * 0.65;
+
+  // Un po' di rientro durante l'espiro.
+  trail.targetDirection.z -= exhaleAmount * 0.35;
+
+  // Le basse rendono il movimento più pesante e verso il basso.
+  trail.targetDirection.y -= smoothedLowBand * 0.22;
+
+  // Le alte rendono il movimento più nervoso/arioso, ma controllato.
+  trail.targetDirection.x += frequencyChange * 1.25;
+  trail.targetDirection.z += smoothedHighBand * sideWave * 0.45;
 
   if (trail.targetDirection.lengthSq() > 0.0001) {
     trail.targetDirection.normalize();
@@ -1316,26 +1426,45 @@ function updateAudioDrivenPosition(trail, delta) {
   // e crea una scia che prende sempre nuove direzioni.
   trail.direction.lerp(
     trail.targetDirection,
-    0.018 + motionAmount * 0.05 + Math.abs(frequencyChange) * 0.08
+    0.035 + trail.breathPhaseAmount * 0.12
   );
   trail.direction.normalize();
 
   // Velocità della testa della scia.
   // Se il suono è tranquillo, questa velocità diventa molto bassa.
-  const trajectorySpeed =
-    (0.025 +
-    motionAmount * 0.18 +
-    smoothedHighBand * 0.045) * trajectoryParams.speed;
+  const inhaleSpeed = trail.breathPhase === 'inhale'
+    ? 0.14 + trail.breathEnvelope * 0.38
+    : 0;
+
+  const exhaleSpeed = trail.breathPhase === 'exhale'
+    ? 0.075 + trail.breathEnvelope * 0.22
+    : 0;
+
+    const pauseSpeed =
+      trail.breathPhase === 'pause' || trail.breathPhase === 'hold'
+        ? 0.012
+        : 0;
+
+  const trajectorySpeed = (
+    pauseSpeed +
+    inhaleSpeed +
+    exhaleSpeed +
+    smoothedHighBand * 0.025
+  ) * trajectoryParams.speed;
 
   // Accelerazione morbida nella direzione persistente.
   trail.velocity.lerp(
     trail.direction.clone().multiplyScalar(trajectorySpeed * trajectoryParams.forwardPush),
-    0.04 + motionAmount * 0.09
+    0.04 + trail.breathPhaseAmount * 0.12
   );
 
   // Freno: più il suono è calmo, più la testa si ferma.
-  const calmBrake = THREE.MathUtils.lerp(0.88, 0.985, motionAmount);
-  trail.velocity.multiplyScalar(calmBrake);
+  const breathBrake =
+  trail.breathPhase === 'pause' || trail.breathPhase === 'hold'
+    ? 0.91
+    : THREE.MathUtils.lerp(0.93, 0.992, trail.breathEnvelope);
+
+  trail.velocity.multiplyScalar(breathBrake);
 
   trail.position.add(trail.velocity);
 
@@ -1365,13 +1494,15 @@ function updateAudioDrivenPosition(trail, delta) {
 
   turbAmplitude.value = THREE.MathUtils.lerp(
     turbAmplitude.value,
-    0.25 + smoothedLevel * 2.4 + highBand * 1.2,
+    0.08 + trail.breathEnvelope * 0.75 + highBand * 0.35,
     0.08
   );
 
+  const spawnTarget = 18 + trail.breathEnvelope * 85;
+
   nbToSpawn.value = THREE.MathUtils.lerp(
     nbToSpawn.value,
-    8 + smoothedLevel * 70,
+    spawnTarget,
     0.08
   );
 
