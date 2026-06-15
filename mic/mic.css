@@ -156,11 +156,23 @@ body {
 .mic-message {
   margin: 0;
   max-width: 320px;
+  min-height: calc(0.92rem * 1.22 * 2);
   text-align: center;
   font-size: 0.92rem;
   line-height: 1.22;
   opacity: 0.9;
   white-space: pre-line;
+}
+
+.mic-ui.is-uploading .mic-message {
+  opacity: 1;
+  color: #fff;
+  animation: mic-uploading-blink 2.4s ease-in-out infinite;
+}
+
+@keyframes mic-uploading-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
 }
 
 .mic-progress {
