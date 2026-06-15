@@ -154,8 +154,8 @@ function spawnRibbonAlongBezier(trail, ribbon, camera, engine, homeParticles, un
       engine.setStaticParticleMeta(
         idx,
         Math.random() * Math.PI * 2,
-        0.55 + Math.random() * 1.25,
-        0.1 + Math.random() * 0.28,
+        0.12 + Math.random() * 0.38,
+        0.07 + Math.random() * 0.16,
         curveT
       );
       engine.setStaticRibbonMeta(idx, ribbonIndex, curveProx);
@@ -266,15 +266,7 @@ export function createMicTrailRenderer(container) {
     const duration = sparkle.end - sparkle.start;
     const t = (now - sparkle.start) / duration;
     if (t >= 1) return 0;
-
-    const attack = 0.07;
-    if (t < attack) {
-      const swell = t / attack;
-      return swell * swell * sparkle.peak;
-    }
-
-    const decay = 1 - (t - attack) / (1 - attack);
-    return sparkle.peak * decay * decay * decay;
+    return Math.sin(t * Math.PI) * sparkle.peak;
   }
 
   function updateHomeSparkles(now) {
@@ -282,22 +274,19 @@ export function createMicTrailRenderer(container) {
 
     if (
       uniqueHomeIndices.size > 0 &&
-      activeSparkles.length < 20 &&
-      now - lastSparkleRoll > 120 + Math.random() * 260
+      activeSparkles.length < 32 &&
+      now - lastSparkleRoll > 420 + Math.random() * 880
     ) {
       lastSparkleRoll = now;
-      const picks = 2 + Math.floor(Math.random() * 4);
       const indices = Array.from(uniqueHomeIndices);
+      const index = indices[Math.floor(Math.random() * indices.length)];
 
-      for (let i = 0; i < picks; i += 1) {
-        const index = indices[Math.floor(Math.random() * indices.length)];
-        activeSparkles.push({
-          index,
-          start: now,
-          end: now + 380 + Math.random() * 620,
-          peak: 0.55 + Math.random() * 0.95,
-        });
-      }
+      activeSparkles.push({
+        index,
+        start: now,
+        end: now + 2800 + Math.random() * 3200,
+        peak: 0.18 + Math.random() * 0.32,
+      });
     }
 
     const sparkleEntries = [];

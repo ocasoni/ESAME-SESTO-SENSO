@@ -425,22 +425,30 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
           const isLarge = step(0.72, sizeSeed);
 
           const twSlow = sin(appearanceTime.mul(speed).add(phase)).mul(0.5).add(0.5);
-          const twMid = sin(appearanceTime.mul(speed.mul(1.85)).add(phase.mul(1.41)))
+          const twMid = sin(appearanceTime.mul(speed.mul(1.35)).add(phase.mul(1.17)))
             .mul(0.5)
             .add(0.5);
-          const twinkleBright = twSlow.mul(strength).add(twMid.mul(strength.mul(0.55)));
+          const twFast = sin(appearanceTime.mul(speed.mul(0.48)).add(phase.mul(0.63)))
+            .mul(0.5)
+            .add(0.5);
+          const twinkleBright = twSlow
+            .mul(strength)
+            .add(twMid.mul(strength.mul(0.45)))
+            .add(twFast.mul(strength.mul(0.28)));
 
-          const bucketDur = float(0.5);
-          const bucket = floor(appearanceTime.div(bucketDur));
-          const localT = appearanceTime.sub(bucket.mul(bucketDur)).div(bucketDur);
-          const sparklePick = hash(particleIndex.add(bucket.mul(113)));
-          const isSparkle = step(float(0.93), sparklePick);
-          const attack = localT.div(0.08).clamp(0.0, 1.0);
-          const release = float(1.0).sub(localT.sub(0.08).div(0.92).clamp(0.0, 1.0));
-          const sparkleEnv = min(attack, release);
-          const sparkleGpu = isSparkle
-            .mul(sparkleEnv)
-            .mul(strength.mul(16.0).add(0.75))
+          const shimmerPhase = hash(particleIndex.add(53)).mul(TWO_PI);
+          const shimmerSpeed = hash(particleIndex.add(97)).mul(0.22).add(0.06);
+          const shimmerA = sin(appearanceTime.mul(shimmerSpeed).add(shimmerPhase)).mul(0.5).add(0.5);
+          const shimmerB = sin(appearanceTime.mul(shimmerSpeed.mul(0.58)).add(shimmerPhase.mul(2.07)))
+            .mul(0.5)
+            .add(0.5);
+          const shimmerC = sin(appearanceTime.mul(shimmerSpeed.mul(1.24)).add(phase.mul(1.31)))
+            .mul(0.5)
+            .add(0.5);
+          const gpuSparkle = shimmerA
+            .mul(shimmerB)
+            .mul(shimmerC)
+            .mul(strength.mul(7.5).add(0.3))
             .mul(float(1.0).sub(appearanceRecording));
 
           const midWeight = float(1.0).sub(abs(ribbonT.sub(0.5).mul(2.0))).clamp(0.0, 1.0);
@@ -458,20 +466,20 @@ export async function createTrailEngine(renderer, worldGroup, slotCount = 1, opt
             .add(breathLift)
             .mul(appearanceRecording);
 
-          const sparkleTotal = sparkleIntensity.element(particleIndex).add(sparkleGpu);
-          const sparkleNorm = sparkleTotal.div(1.25).clamp(0.0, 1.0);
-          const twinkleSize = float(1.0).add(twinkleBright.mul(0.28));
-          const sparkleSizeMul = float(1.0).add(sparkleNorm.mul(2.0));
+          const sparkleTotal = sparkleIntensity.element(particleIndex).add(gpuSparkle);
+          const sparkleNorm = sparkleTotal.div(1.1).clamp(0.0, 1.0);
+          const twinkleSize = float(1.0).add(twinkleBright.mul(0.18));
+          const sparkleSizeMul = float(1.0).add(sparkleNorm.mul(0.42));
           const waveSizeMul = float(1.0).add(waveAmount.mul(1.1));
           const finalSize = particleSize.mul(twinkleSize.mul(sparkleSizeMul).mul(waveSizeMul));
           particleProperties.element(particleIndex).x.assign(finalSize);
 
-          const finalBright = float(0.3)
-            .add(twinkleBright.mul(2.4))
-            .add(sparkleTotal.mul(1.45))
+          const finalBright = float(0.32)
+            .add(twinkleBright.mul(2.0))
+            .add(sparkleTotal.mul(0.95))
             .add(audioBright)
             .add(waveAmount.mul(2.2))
-            .clamp(0.12, 3.8);
+            .clamp(0.12, 3.4);
 
           particleColors.element(particleIndex).w.assign(finalBright);
         });
