@@ -16,6 +16,10 @@ const actionBtn = document.getElementById('mic-action');
 const canvasEl = document.getElementById('mic-canvas');
 const landingTextEl = document.getElementById('mic-landing-text');
 
+const aboutEl = document.getElementById('mic-about');
+const aboutOpenBtn = document.getElementById('mic-about-open');
+const aboutCloseBtn = document.getElementById('mic-about-close');
+
 function lockPageScroll() {
   const blockScroll = (event) => {
     event.preventDefault();
@@ -26,6 +30,25 @@ function lockPageScroll() {
 }
 
 lockPageScroll();
+
+function openAbout() {
+  aboutEl?.classList.add('is-open');
+  aboutEl?.setAttribute('aria-hidden', 'false');
+}
+
+function closeAbout() {
+  aboutEl?.classList.remove('is-open');
+  aboutEl?.setAttribute('aria-hidden', 'true');
+}
+
+aboutOpenBtn?.addEventListener('click', openAbout);
+aboutCloseBtn?.addEventListener('click', closeAbout);
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeAbout();
+  }
+});
 
 const COPY = {
   idle: {

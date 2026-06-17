@@ -222,3 +222,114 @@ body {
 .mic-ui.is-error .mic-message {
   color: #ffc58a;
 }
+
+.mic-about-open {
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.22;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  opacity: 0.92;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mic-about {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  transform: translateX(-100%);
+  transition: transform 0.55s ease;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.mic-about.is-open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.mic-about-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding:
+    max(18px, env(safe-area-inset-top))
+    max(18px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom))
+    max(18px, env(safe-area-inset-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mic-about-title {
+  margin: 0 48px 28px 0;
+  font-family: 'EB Garamond', Georgia, serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(2rem, 7vw, 2.55rem);
+  line-height: 1.05;
+}
+
+.mic-about-close {
+  position: fixed;
+  top: max(18px, env(safe-area-inset-top));
+  right: max(18px, env(safe-area-inset-right));
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mic-about-close svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.mic-about-close path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.mic-about-content {
+  max-width: 360px;
+  padding-right: 8px;
+}
+
+.mic-about-content p {
+  margin: 0 0 22px;
+  font-size: 1rem;
+  line-height: 1.22;
+  opacity: 0.95;
+}
+
+.mic-about-credit {
+  max-width: 360px;
+  margin-top: 84px;
+  padding-bottom: 24px;
+}
+
+.mic-about-credit p {
+  margin: 0 0 14px;
+  font-size: 0.95rem;
+  line-height: 1.25;
+  opacity: 0.95;
+}

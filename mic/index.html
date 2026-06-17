@@ -27,6 +27,10 @@
           Qui diventa traccia visibile,<br />
           un'eco luminosa nello spazio.
         </p>
+
+        <button type="button" class="mic-about-open" id="mic-about-open">
+          Know more
+        </button>
       </header>
 
       <section class="mic-panel">
@@ -38,6 +42,43 @@
       </section>
     </div>
 
+    <aside class="mic-about" id="mic-about" aria-hidden="true">
+      <div class="mic-about-inner">
+        <button type="button" class="mic-about-close" id="mic-about-close" aria-label="Chiudi about">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+    
+        <h2 class="mic-about-title">L’eco di un respiro</h2>
+    
+        <div class="mic-about-content">
+          <p>
+            Il progetto nasce dalla volontà di indagare il concetto di sesto senso e di chiedersi se questo possa essere immaginato come un’interfaccia: un sistema capace di rendere percepibile ciò che normalmente resta nascosto, invisibile o difficile da tradurre.
+          </p>
+    
+          <p>
+            A partire da questa domanda, il progetto esplora il respiro come segnale intimo e invisibile, trasformandolo in una presenza visiva nello spazio digitale. L’utente registra il proprio respiro dal telefono tramite un QR code; l’audio viene inviato al computer, analizzato e tradotto in movimento, densità, colore e forma particellare.
+          </p>
+    
+          <p>
+            Il suono viene elaborato attraverso la Web Audio API, che estrae valori come intensità, frequenze basse, medie e alte, e centroide spettrale. L’audio non viene usato solo come volume, ma come materia dinamica: le sue variazioni di intensità, frequenza e texture generano una forma in continua evoluzione.
+          </p>
+    
+          <p>
+            In questo modo, il respiro diventa una traccia visibile e temporanea: una possibile interfaccia sensibile tra corpo, suono e spazio digitale.
+          </p>
+        </div>
+    
+        <div class="mic-about-credit">
+          <p>Designed and developed by Ottavia Casoni</p>
+          <p>
+            @ottaviacasoni<br />
+            ottaviacasoni@gmail.com
+          </p>
+        </div>
+      </div>
+    </aside>
     <script type="module" src="./mic.js"></script>
   </body>
 </html>
