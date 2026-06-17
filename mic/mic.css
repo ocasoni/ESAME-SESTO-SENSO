@@ -230,7 +230,7 @@ body {
   background: transparent;
   color: #fff;
   font: inherit;
-  font-size: 0.92rem;
+  font-size: 11px;
   line-height: 1.22;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -244,7 +244,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 1);
   color: #fff;
   transform: translateX(-100%);
   transition: transform 0.55s ease;
@@ -316,7 +316,7 @@ body {
 
 .mic-about-content p {
   margin: 0 0 22px;
-  font-size: 1rem;
+  font-size: 0.92rem;
   line-height: 1.22;
   opacity: 0.95;
 }
@@ -329,7 +329,7 @@ body {
 
 .mic-about-credit p {
   margin: 0 0 14px;
-  font-size: 0.95rem;
+  font-size: 11px;
   line-height: 1.25;
   opacity: 0.95;
 }
