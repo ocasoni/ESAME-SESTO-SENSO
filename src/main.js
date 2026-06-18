@@ -624,11 +624,7 @@ function setupPresentationShortcut(panel) {
     }
 
     event.preventDefault();
-    const isHidden = document.body.classList.toggle('presentation-ui-hidden');
-
-    if (!isHidden) {
-      panel.classList.remove('is-hidden');
-    }
+    document.body.classList.toggle('presentation-ui-hidden');
   });
 }
 
@@ -638,6 +634,7 @@ async function createPhoneUploadUI() {
 
   const panel = document.createElement('div');
   panel.id = 'phone-upload-panel';
+  panel.classList.add('is-hidden');
 
   const slot = document.createElement('div');
   slot.className = 'phone-qr-slot';
@@ -652,8 +649,8 @@ async function createPhoneUploadUI() {
   const recall = document.createElement('button');
   recall.type = 'button';
   recall.className = 'phone-qr-recall';
-  recall.textContent = 'QR code';
-  recall.setAttribute('aria-label', 'QR code');
+  recall.textContent = 'Clicca qui per riattivare il sesto senso';
+  recall.setAttribute('aria-label', 'Mostra QR code per riattivare il sesto senso');
   slot.appendChild(recall);
 
   panel.appendChild(slot);

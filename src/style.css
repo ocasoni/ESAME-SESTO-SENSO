@@ -95,8 +95,8 @@ small {
 
 #phone-upload-panel {
   position: absolute;
-  right: 16px;
-  bottom: 16px;
+  left: 20px;
+  top: 76px;
   z-index: 15;
   transition: opacity 0.25s ease;
 }
@@ -108,14 +108,15 @@ body.presentation-ui-hidden #phone-upload-panel {
 
 .phone-qr-slot {
   position: relative;
-  width: 108px;
+  width: min(280px, calc(100vw - 40px));
   height: 108px;
+  pointer-events: none;
 }
 
 .phone-qr-wrap {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  left: 0;
+  top: 0;
   display: block;
   padding: 6px;
   border-radius: 8px;
@@ -126,10 +127,11 @@ body.presentation-ui-hidden #phone-upload-panel {
   transition: transform 0.4s ease, opacity 0.3s ease;
   transform: translateX(0);
   opacity: 1;
+  pointer-events: auto;
 }
 
 #phone-upload-panel.is-hidden .phone-qr-wrap {
-  transform: translateX(calc(100% + 32px));
+  transform: translateY(-8px);
   opacity: 0;
   pointer-events: none;
 }
@@ -143,8 +145,8 @@ body.presentation-ui-hidden #phone-upload-panel {
 
 .phone-qr-recall {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  left: 0;
+  top: 0;
   padding: 0;
   border: none;
   background: transparent;
@@ -153,6 +155,7 @@ body.presentation-ui-hidden #phone-upload-panel {
   font: 500 11px/1.35 Arial, Helvetica, sans-serif;
   cursor: pointer;
   white-space: nowrap;
+  text-align: left;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s ease 0.12s;
