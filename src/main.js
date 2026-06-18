@@ -50,6 +50,7 @@ async function reportTrailAssignment(uploadId, positionIndex, trailNumber) {
 
 let resolvedApiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 const POLL_INTERVAL_MS = Number(import.meta.env.VITE_POLL_INTERVAL_MS || 1500);
+const PRESENTATION_UI_SHORTCUT_KEY = 'h';
 const AUTO_ROTATE_SPEED = 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
@@ -600,6 +601,37 @@ function updatePhoneStatus(text, type = '') {
   }
 }
 
+function isEditableShortcutTarget(target) {
+  return target instanceof HTMLElement && (
+    target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
+  );
+}
+
+function setupPresentationShortcut(panel) {
+  window.addEventListener('keydown', (event) => {
+    if (
+      event.repeat ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      isEditableShortcutTarget(event.target) ||
+      event.key.toLowerCase() !== PRESENTATION_UI_SHORTCUT_KEY
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const isHidden = document.body.classList.toggle('presentation-ui-hidden');
+
+    if (!isHidden) {
+      panel.classList.remove('is-hidden');
+    }
+  });
+}
+
 async function createPhoneUploadUI() {
   const network = await resolveNetworkUrls();
   resolvedApiUrl = network.apiUrl;
@@ -635,6 +667,7 @@ async function createPhoneUploadUI() {
   });
 
   document.body.appendChild(panel);
+  setupPresentationShortcut(panel);
 
   phoneUiElements = { qrCanvas, panel };
 
@@ -1550,4 +1583,3 @@ function updateAudioDrivenPosition(trail, delta) {
     0.28
   );
 }
-

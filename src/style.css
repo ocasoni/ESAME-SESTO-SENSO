@@ -26,6 +26,12 @@ canvas {
   letter-spacing: 0.01em;
   color: rgba(255, 255, 255, 0.9);
   pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+body.presentation-ui-hidden .app-title {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 
 #info {
@@ -92,6 +98,12 @@ small {
   right: 16px;
   bottom: 16px;
   z-index: 15;
+  transition: opacity 0.25s ease;
+}
+
+body.presentation-ui-hidden #phone-upload-panel {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .phone-qr-slot {
