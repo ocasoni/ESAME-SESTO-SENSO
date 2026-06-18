@@ -249,16 +249,12 @@ body {
   --about-title-size: clamp(1.55rem, 4.2svh, 2.1rem);
   --about-title-gap: clamp(10px, 2vh, 18px);
   --about-title-gap: clamp(10px, 2svh, 18px);
-  --about-body-size: clamp(11px, 1.75vh, 13px);
-  --about-body-size: clamp(11px, 1.75svh, 13px);
-  --about-body-gap: clamp(7px, 1.35vh, 14px);
-  --about-body-gap: clamp(7px, 1.35svh, 14px);
-  --about-credit-gap: clamp(10px, 3vh, 32px);
-  --about-credit-gap: clamp(10px, 3svh, 32px);
-  --about-credit-size: clamp(9.5px, 1.45vh, 11px);
-  --about-credit-size: clamp(9.5px, 1.45svh, 11px);
-  --about-credit-line-gap: clamp(6px, 1vh, 12px);
-  --about-credit-line-gap: clamp(6px, 1svh, 12px);
+  --about-body-gap: clamp(7px, 1.15vh, 12px);
+  --about-body-gap: clamp(7px, 1.15svh, 12px);
+  --about-body-leading: 1.16;
+  --about-credit-gap: clamp(8px, 2.2vh, 24px);
+  --about-credit-gap: clamp(8px, 2.2svh, 24px);
+  --about-credit-line-gap: 8px;
   background: rgba(0, 0, 0, 1);
   color: #fff;
   transform: translateX(-100%);
@@ -326,27 +322,31 @@ body {
 }
 
 .mic-about-content {
+  width: min(100%, 360px);
   max-width: 360px;
   padding-right: 0;
+  text-align: left;
 }
 
 .mic-about-content p {
   margin: 0 0 var(--about-body-gap);
-  font-size: var(--about-body-size);
-  line-height: 1.16;
+  font-size: 0.92rem;
+  line-height: var(--about-body-leading);
   opacity: 0.95;
 }
 
 .mic-about-credit {
+  width: min(100%, 360px);
   max-width: 360px;
   margin-top: auto;
   padding-top: var(--about-credit-gap);
   padding-bottom: 0;
+  text-align: left;
 }
 
 .mic-about-credit p {
   margin: 0 0 var(--about-credit-line-gap);
-  font-size: var(--about-credit-size);
+  font-size: 11px;
   line-height: 1.18;
   opacity: 0.95;
 }
@@ -361,15 +361,11 @@ body {
     --about-pad-block: max(10px, env(safe-area-inset-top));
     --about-pad-inline: max(12px, env(safe-area-inset-left));
     --about-title-size: 1.35rem;
-    --about-title-gap: 7px;
-    --about-body-size: 10px;
-    --about-body-gap: 5px;
-    --about-credit-gap: 7px;
-    --about-credit-size: 9px;
-  }
-
-  .mic-about-content p {
-    line-height: 1.1;
+    --about-title-gap: 6px;
+    --about-body-gap: 4px;
+    --about-body-leading: 1.07;
+    --about-credit-gap: 6px;
+    --about-credit-line-gap: 4px;
   }
 }
 

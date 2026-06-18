@@ -2,6 +2,8 @@
 
 Il progetto nasce dalla volontà di indagare il concetto di sesto senso e di chiedersi se questo possa essere immaginato come un’interfaccia, un sistema capace di rendere percepibile ciò che normalmente resta nascosto, invisibile o difficile da tradurre.
 
+<video src="./assets/desktop.mp4" controls playsinline width="100%"></video>
+
 Link per provarlo: https://ocasoni.github.io/ESAME-SESTO-SENSO/
 
 A partire da questa domanda, il progetto esplora il respiro come segnale intimo e invisibile, trasformandolo in una presenza visiva nello spazio digitale.
