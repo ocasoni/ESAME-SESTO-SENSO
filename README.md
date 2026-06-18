@@ -2,7 +2,9 @@
 
 Il progetto nasce dalla volontà di indagare il concetto di sesto senso e di chiedersi se questo possa essere immaginato come un’interfaccia, un sistema capace di rendere percepibile ciò che normalmente resta nascosto, invisibile o difficile da tradurre.
 
-<video src="./assets/desktop.mp4" controls playsinline width="100%"></video>
+<video autoplay muted loop playsinline controls width="100%">
+  <source src="assets/desktop.mp4" type="video/mp4" />
+</video>
 
 Link per provarlo: https://ocasoni.github.io/ESAME-SESTO-SENSO/
 
@@ -267,3 +269,9 @@ La logica principale è:
 
 
 Il risultato è una scia 3D che non reagisce solo al volume, ma cerca di conservare ritmo, energia e texture sonora del respiro registrato.
+
+## Contatti
+
+**Autrice:** Ottavia Casoni
+**Email:** ottaviacasoni@gmail.com 
+**Instagram:** @ottaviacasoni

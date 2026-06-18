@@ -20,8 +20,18 @@ const aboutEl = document.getElementById('mic-about');
 const aboutOpenBtn = document.getElementById('mic-about-open');
 const aboutCloseBtn = document.getElementById('mic-about-close');
 
+function canScrollAbout(event) {
+  if (!aboutEl?.classList.contains('is-open') || !(event.target instanceof Element)) {
+    return false;
+  }
+
+  const scrollTarget = event.target.closest('.mic-about-inner');
+  return Boolean(scrollTarget && scrollTarget.scrollHeight > scrollTarget.clientHeight);
+}
+
 function lockPageScroll() {
   const blockScroll = (event) => {
+    if (canScrollAbout(event)) return;
     event.preventDefault();
   };
 
