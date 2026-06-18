@@ -8,6 +8,8 @@ Il suono viene elaborato attraverso la Web Audio API, che estrae valori come int
 
 In questo modo, il respiro diventa una traccia visibile e temporanea, una possibile interfaccia sensibile tra corpo, suono e spazio digitale.
 
+Link per provarlo: https://ocasoni.github.io/ESAME-SESTO-SENSO/ 
+
 # Il progetto
 
 Il progetto genera scie particellari 3D a partire dal suono del respiro registrato dall’utente. Il sistema è diviso in tre fasi principali:
