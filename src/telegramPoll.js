@@ -4,7 +4,7 @@ export function startUploadPolling({ apiUrl, intervalMs = 1500, onNewUpload, onS
   let timerId = null;
   let bootstrapped = false;
   const bootstrapStartedAt = Date.now();
-  const bootstrapLookbackMs = 2 * 60 * 1000;
+  const bootstrapLookbackMs = 60 * 60 * 1000;
 
   function getUploadCreatedAt(upload) {
     const createdAt = Date.parse(upload?.createdAt || '');
@@ -28,7 +28,7 @@ export function startUploadPolling({ apiUrl, intervalMs = 1500, onNewUpload, onS
         const catchableUploads = uploads.filter(shouldCatchBootstrapUpload);
 
         if (catchableUploads.length > 0) {
-          lastSeenId = Math.max(0, Math.min(...catchableUploads.map((upload) => upload.id)) - 1);
+          lastSeenId = Math.max(0, Math.max(...catchableUploads.map((upload) => upload.id)) - 1);
         } else {
           lastSeenId = data.latestId || 0;
         }
