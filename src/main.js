@@ -649,7 +649,7 @@ async function createPhoneUploadUI() {
   const recall = document.createElement('button');
   recall.type = 'button';
   recall.className = 'phone-qr-recall';
-  recall.textContent = 'Clicca qui per riattivare il sesto senso';
+  recall.textContent = 'Clicca qui per attivare il sesto senso';
   recall.setAttribute('aria-label', 'Mostra QR code per riattivare il sesto senso');
   slot.appendChild(recall);
 
