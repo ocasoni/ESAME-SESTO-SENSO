@@ -1,16 +1,10 @@
 # L'eco di un respiro
 
-Il progetto nasce dalla volontà di indagare il concetto di sesto senso e di chiedersi se questo possa essere immaginato come un’interfaccia: un sistema capace di rendere percepibile ciò che normalmente resta nascosto, invisibile o difficile da tradurre.
-
-Link per provarlo: https://ocasoni.github.io/ESAME-SESTO-SENSO/ 
-
-A partire da questa domanda, il progetto esplora il respiro come segnale intimo e invisibile, trasformandolo in una presenza visiva nello spazio digitale. L’utente registra il proprio respiro dal telefono, tramite un QR code, l’audio viene inviato al computer, analizzato e tradotto in movimento, densità, colore e forma particellare.
-
-Il suono viene elaborato attraverso la Web Audio API, che estrae valori come intensità, frequenze basse, medie e alte, e centroide spettrale. L’audio non viene usato solo come volume, ma come materia dinamica. Le sue variazioni di intensità, frequenza e texture generano una forma in continua evoluzione.
-
-In questo modo, il respiro diventa una traccia visibile e temporanea, una possibile interfaccia sensibile tra corpo, suono e spazio digitale.
-
-
+Il respiro cambia con noi.
+Nel ritmo, nell'intensità,
+negli stati d'animo.
+Qui diventa traccia visibile,
+un'eco luminosa nello spazio.
 
 # Il progetto
 
