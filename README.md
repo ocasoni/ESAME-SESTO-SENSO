@@ -272,6 +272,6 @@ Il risultato è una scia 3D che non reagisce solo al volume, ma cerca di conserv
 
 ## Contatti
 
-**Autrice:** Ottavia Casoni
-**Email:** ottaviacasoni@gmail.com 
+**Autrice:** Ottavia Casoni <br>
+**Email:** ottaviacasoni@gmail.com <br>
 **Instagram:** @ottaviacasoni
