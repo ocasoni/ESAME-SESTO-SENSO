@@ -51,7 +51,8 @@ Dopo la registrazione, l’audio viene inviato al backend ospitato su Render. Il
 
 Ogni registrazione diventa quindi una scia indipendente, che conserva il ritmo e le caratteristiche sonore del respiro registrato.
 
----
+<br clear="all">
+
 
 ## Fase 2: analisi del suono
 
