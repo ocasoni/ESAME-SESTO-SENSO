@@ -41,7 +41,7 @@ Render / backend
         ↓
 PC con schermo desktop
 ```
-<img align="right" src="assets/2.gif" width="30%" height="700">
+<img align="right" src="assets/2.gif" width="20%" height="600">
 
 Sul desktop viene generato un QR code. Quando l’utente lo scannerizza, apre sul telefono una pagina web ospitata su GitHub Pages. Questa pagina serve per registrare il suono del respiro.
 
