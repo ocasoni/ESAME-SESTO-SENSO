@@ -2,10 +2,7 @@
 
 Il progetto nasce dalla volontà di indagare il concetto di sesto senso e di chiedersi se questo possa essere immaginato come un’interfaccia, un sistema capace di rendere percepibile ciò che normalmente resta nascosto, invisibile o difficile da tradurre.
 
-<p align="center">
-  <img src="assets/deskimg2.png" alt="Preview desktop del progetto" width="49%">
-  <img src="assets/deskimg.png" alt="Seconda preview desktop del progetto" width="49%">
-</p>
+<img src="assets/1.gif" width="100%">
 
 Link per provarlo: https://ocasoni.github.io/ESAME-SESTO-SENSO/
 
