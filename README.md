@@ -41,6 +41,7 @@ Render / backend
         ↓
 PC con schermo desktop
 ```
+<img src="assets/2.gif" width="100%">
 
 Sul desktop viene generato un QR code. Quando l’utente lo scannerizza, apre sul telefono una pagina web ospitata su GitHub Pages. Questa pagina serve per registrare il suono del respiro.
 
@@ -175,6 +176,8 @@ Scia 3D finale
 ```
 
 Quando arriva un nuovo audio, viene creata una nuova scia con `createTrail`. Ogni scia contiene la propria posizione, velocità, direzione, colore, frame audio e stato del respiro.
+
+<img src="assets/3.gif" width="100%">
 
 ### Mappatura audio-visiva
 
